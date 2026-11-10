@@ -1,0 +1,11 @@
+{
+  "name": "Model Viewer",
+  "version": "1.0.0",
+  "contactEmailAddress": "direplatypus@outlook.com",
+  "hasRibbonIcon": true,
+  "hasSettingsIcon": false,
+  "requiredPermissions": [],
+  "requiredDependencies": {
+    "prettyui": 6398181
+  }
+}
