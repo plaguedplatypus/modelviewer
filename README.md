@@ -1,6 +1,6 @@
 # Model Viewer
 
-Model Viewer is a RuneScape development plugin for inspecting NPCs, trying Seq animations, and viewing raw model assets. It opens from the plugin ribbon into a movable window, so the preview and controls stay together.
+Model Viewer is a RuneScape development plugin for inspecting NPCs, Locs, and raw model assets while trying Seq animations. It opens from the plugin ribbon into a movable window, so the preview and controls stay together.
 
 ## Open the viewer
 
@@ -14,7 +14,9 @@ On the **NPC** tab, use **NPCs** to search for an NPC ID or part of its config n
 
 On the **Models** tab, use **Model assets** to search for an asset ID or part of its name, then select a result to view that raw model. Use **Seq animations** on the same tab to find and apply a Seq to it. **Clear animation** returns the model to its still pose. A raw model can be a chat head, body part, effect, or other single asset rather than a complete NPC. The API does not expose a model config lookup, so a listed asset may still appear blank if it is missing from the active cache.
 
-Each search starts with the full catalog. Scroll within the result list and use **Prev** and **Next** to move through every match in pages of 500. Enter an exact ID or part of a name to narrow a large catalog. A search with one result selects it automatically. Some NPC configs have no visible model. A Seq built for a different skeleton or raw model rig may leave it still or animate it strangely. The NPC and Models tabs remember their own selected Seq.
+On the **Locs** tab, search for scenery by Loc ID or config name. Select a Loc to preview the models for its first supported shape. Use the shape **Prev** and **Next** buttons below the list to see its other forms. The shape name and number appear above those buttons. Some Locs are invisible or act as MultiLoc selectors, so they have no direct model to show. The **Seq animations** view can apply a Seq to the Loc's models, though an incompatible animation may do nothing.
+
+Each search starts with the full catalog. Scroll within the result list and use **Prev** and **Next** to move through every match in pages of 500. Enter an exact ID or part of a name to narrow a large catalog. A search with one result selects it automatically. Some NPC configs have no visible model. A Seq built for a different skeleton or model rig may leave it still or animate it strangely. The NPC, Models, and Locs tabs remember their own selected Seq.
 
 ## Adjust the view
 
@@ -25,5 +27,5 @@ Each search starts with the full catalog. Scroll within the result list and use 
 - **Background:** Click the colour swatch below **Clear animation**, choose a colour, and confirm it in the picker. Press **Reset** to restore the original background. The preview remembers the chosen colour while the viewer is open.
 - **Window size:** Drag an edge or corner of the viewer window to make the model preview larger or smaller. The search and camera controls stay on the left.
 
-The game API does not provide rendered model bounds, so **Fit model** estimates framing from the NPC's overlay height or a neutral height for raw assets. Use camera distance when the estimate does not fit the model.
+The game API does not provide rendered model bounds, so **Fit model** estimates framing from the NPC's overlay height or a neutral height for raw assets and Locs. Use camera distance when the estimate does not fit the model.
 

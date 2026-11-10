@@ -5,8 +5,11 @@ local ribbon
 local npcNames
 local seqNames
 local modelNames
+local locNames
 local model
 local group
+local locConfig
+local locModels = {}
 local cameraId
 local status
 local npcInfo
@@ -14,18 +17,39 @@ local seqInfo
 local distanceField
 local yawField
 local pitchField
+local shapeInfo
+local shapePage
 local defaultBackground = 0x12110F
 
--- NPC and raw model views keep separate camera distance and pan settings.
+local shapeNames = {
+    [0] = "WALL_STRAIGHT", [1] = "WALL_DIAGONALCORNER", [2] = "WALL_L",
+    [3] = "WALL_SQUARECORNER", [4] = "WALLDECOR_STRAIGHT_NOOFFSET",
+    [5] = "WALLDECOR_STRAIGHT_OFFSET", [6] = "WALLDECOR_DIAGONAL_OFFSET",
+    [7] = "WALLDECOR_DIAGONAL_NOOFFSET", [8] = "WALLDECOR_DIAGONAL_BOTH",
+    [9] = "WALL_DIAGONAL", [10] = "CENTREPIECE_STRAIGHT",
+    [11] = "CENTREPIECE_DIAGONAL", [12] = "ROOF_STRAIGHT",
+    [13] = "ROOF_DIAGONAL_WITH_ROOFEDGE", [14] = "ROOF_DIAGONAL",
+    [15] = "ROOF_L_CONCAVE", [16] = "ROOF_L_CONVEX",
+    [17] = "ROOF_FLAT", [18] = "ROOFEDGE_STRAIGHT",
+    [19] = "ROOFEDGE_DIAGONALCORNER", [20] = "ROOFEDGE_L",
+    [21] = "ROOFEDGE_SQUARECORNER", [22] = "GROUNDDECOR",
+    [23] = "WALL_L_ALT", [24] = "WALLDECOR_DIAGONAL_BOTH_ALT",
+}
+
+-- Each asset tab keeps its own camera distance and pan settings.
 local state = {
     npcId = 0,
     assetId = 0,
+    locId = nil,
     seqId = nil,
     assetSeqId = nil,
+    locSeqId = nil,
     tab = "npc",
     distance = 2200,
     npcDistance = nil,
     assetDistance = nil,
+    locDistance = nil,
+    shapeIndex = 1,
     height = 700,
     yaw = 0,
     pitch = 0,
@@ -34,6 +58,7 @@ local state = {
     pan = {
         npc = { x = 0, y = 0 },
         models = { x = 0, y = 0 },
+        loc = { x = 0, y = 0 },
     },
 }
 
@@ -76,14 +101,25 @@ end
 local function applyTransform()
     -- Convert drag distance in interface units to model units at this zoom.
     -- This keeps the chosen screen position steady when the camera zooms.
-    local pan = state.pan[state.tab == "models" and "models" or "npc"]
+    local pan = state.pan[state.tab]
     local worldPerUnit = state.distance * 2 * math.tan(math.rad(25)) / group.height
-    model:SetTransform(
-        Vector3.new(pan.x * worldPerUnit, -pan.y * worldPerUnit, 0),
-        Vector3.new(math.rad(state.yaw), math.rad(state.pitch), 0),
-        Vector3.new(1, 1, 1),
-        0
-    )
+    local position = Vector3.new(pan.x * worldPerUnit, -pan.y * worldPerUnit, 0)
+    local scale = Vector3.new(1, 1, 1)
+    if state.tab == "loc" and locConfig then
+        -- Loc offsets apply before scale, followed by the post-offset.
+        local offset, post = locConfig.modelOffset, locConfig.modelPostOffset
+        scale = locConfig.modelScale
+        position = Vector3.new(
+            position.x + offset.x * scale.x + post.x,
+            position.y + offset.y * scale.y + post.y,
+            position.z + offset.z * scale.z + post.z
+        )
+    end
+    local rotation = Vector3.new(math.rad(state.yaw), math.rad(state.pitch), 0)
+    model:SetTransform(position, rotation, scale, 0)
+    for _, part in ipairs(locModels) do
+        part:SetTransform(position, rotation, scale, 0)
+    end
 end
 
 -- Rebuild the group camera when zoom or the displayed model's height changes.
@@ -113,17 +149,24 @@ local function applyCamera()
     if previous then group:DeleteCamera(previous) end
 end
 
--- NPC and raw model assets remember their own camera distance.
+-- Each tab remembers its own camera distance.
 local function setDistance(distance)
     state.distance = distance
-    if state.tab ~= "models" then
+    if state.tab == "npc" then
         state.npcDistance = distance
-    else
+    elseif state.tab == "models" then
         state.assetDistance = distance
+    else
+        state.locDistance = distance
     end
     distanceField.content = string.format("%.0f", distance)
     applyCamera()
     applyTransform()
+end
+
+local function clearLocModels()
+    for _, part in ipairs(locModels) do part:Destroy() end
+    locModels = {}
 end
 
 -- NPC names come from the catalog, but the active cache decides
@@ -173,6 +216,78 @@ local function setAsset(assetId)
     setStatus("Model asset selected. Use camera distance to adjust the preview.")
 end
 
+-- A Loc can use several model IDs, and each supported shape can use a
+-- different set. Draw those IDs together in the same preview group.
+local function setLocShape()
+    clearLocModels()
+    local shapes = locConfig.locShapeTypes
+    local shape = shapes[state.shapeIndex]
+    state.height = 700
+    npcInfo.content = "Loc " .. state.locId .. "  " .. locNames[state.locId]
+
+    if not shape then
+        model:SetModel(ui.ModelType.NONE, 0)
+        model.animID = -1
+        shapeInfo.content = locConfig.isMultiLoc and "MultiLoc: no direct shape" or "No model shapes"
+        shapePage.content = "0 / 0"
+        seqInfo.content = "No model for this Loc"
+        setDistance(state.locDistance or 1750)
+        setStatus("This Loc has no direct model to preview.")
+        return
+    end
+
+    shapeInfo.content = (shapeNames[shape] or "Shape") .. " (" .. shape .. ")"
+    shapePage.content = state.shapeIndex .. " / " .. #shapes
+    local ids = locConfig:GetModelIDs(shape)
+    if #ids == 0 then
+        model:SetModel(ui.ModelType.NONE, 0)
+        model.animID = -1
+        seqInfo.content = "No model for this shape"
+        setDistance(state.locDistance or 1750)
+        setStatus("This shape has no model to preview.")
+        return
+    end
+
+    model:SetModel(ui.ModelType.MODEL, ids[1])
+    model.animID = state.locSeqId or -1
+    for index = 2, #ids do
+        local part = ui.Model.new(group)
+        part:SetSize(0, 0, 1, 1)
+        part.clickthrough = true
+        part:SetModel(ui.ModelType.MODEL, ids[index])
+        part.animID = model.animID
+        locModels[#locModels + 1] = part
+    end
+    seqInfo.content = state.locSeqId and ("Seq " .. state.locSeqId .. "  " .. seqNames[state.locSeqId])
+        or "No Seq selected"
+    setDistance(state.locDistance or 1750)
+    setStatus("Loc shape loaded. Use camera distance to adjust the preview.")
+end
+
+local function setLoc(locId)
+    local loc = config.Loc.FromID(locId)
+    if not loc then
+        setStatus("Loc " .. locId .. " is unavailable in this game cache.")
+        return
+    end
+    if state.locId ~= locId then
+        state.locDistance = nil
+        state.pan.loc.x, state.pan.loc.y = 0, 0
+        state.shapeIndex = 1
+    end
+    state.locId = locId
+    locConfig = loc
+    setLocShape()
+end
+
+local function stepLocShape(delta)
+    if not locConfig then return end
+    local count = #locConfig.locShapeTypes
+    if count == 0 then return end
+    state.shapeIndex = ((state.shapeIndex - 1 + delta) % count) + 1
+    setLocShape()
+end
+
 -- A Seq in the catalog may be absent from this game cache. Check it before
 -- replacing the animation currently shown on the NPC.
 local function setSeq(seqId)
@@ -199,7 +314,19 @@ local function setAssetSeq(seqId)
     setStatus("Seq applied to model. An incompatible rig may show no movement.")
 end
 
--- NPCs, Seqs, and raw assets all use the same sparse-ID catalog search.
+local function setLocSeq(seqId)
+    if not config.Seq.FromID(seqId) then
+        setStatus("Seq " .. seqId .. " is unavailable in this game cache.")
+        return
+    end
+    state.locSeqId = seqId
+    model.animID = seqId
+    for _, part in ipairs(locModels) do part.animID = seqId end
+    seqInfo.content = "Seq " .. seqId .. "  " .. seqNames[seqId]
+    setStatus("Seq applied to Loc models. Some models may not animate.")
+end
+
+-- NPCs, Locs, Seqs, and raw assets use the same sparse-ID catalog search.
 local function makeSearch(parent, kind, names, y, selected, listHeight)
     label(parent, kind, 12, y, 68, 0xF3C971FF)
     local pageText = label(parent, "", 74, y, 104)
@@ -379,9 +506,9 @@ local function makeSearch(parent, kind, names, y, selected, listHeight)
     runSearch()
 end
 
--- NPCs and raw models use the same two search views. Each view keeps its
+-- Each asset tab uses the same two search views. Each view keeps its
 -- own query and scroll position while the selected asset stays in the preview.
-local function makeSearchTabs(parent, title, kind, names, selected, seqSelected)
+local function makeSearchTabs(parent, title, kind, names, selected, seqSelected, listHeight)
     local assetSearch = ui.Layer.new(parent)
     assetSearch:SetPos(0, 34)
     assetSearch:SetSize(326, 306)
@@ -407,8 +534,8 @@ local function makeSearchTabs(parent, title, kind, names, selected, seqSelected)
         searchLine:SetPos(164, 29)
     end, 24)
 
-    makeSearch(assetSearch, kind, names, 5, selected, 226)
-    makeSearch(seqSearch, "Seq", seqNames, 5, seqSelected, 226)
+    makeSearch(assetSearch, kind, names, 5, selected, listHeight or 226)
+    makeSearch(seqSearch, "Seq", seqNames, 5, seqSelected, listHeight or 226)
 end
 
 local function numberFrom(input, description)
@@ -451,6 +578,8 @@ local function openWindow()
     -- The host can remove an interface on reload. Drop callbacks to its old
     -- components before building a new window.
     window = nil
+    locModels = {}
+    locConfig = nil
 
     -- Name tables are loaded only when the viewer opens, rather than at plugin startup.
     npcNames = require("data/npc")
@@ -486,6 +615,11 @@ local function openWindow()
     assetTab:SetSize(326, 340)
     assetTab.hidden = true
 
+    local locTab = ui.Layer.new(content)
+    locTab:SetPos(0, 40)
+    locTab:SetSize(326, 340)
+    locTab.hidden = true
+
     label(content, "Camera distance", 12, 386, 296)
     distanceField = field(content, "2200", 12, 410, 211)
     button(content, "Apply", 231, 410, 77, applyDistance)
@@ -515,7 +649,7 @@ local function openWindow()
         setStatus("Camera fitted using an approximate model height.")
     end)
     button(content, "Center model", 160, 508, 148, function()
-        local pan = state.pan[state.tab == "models" and "models" or "npc"]
+        local pan = state.pan[state.tab]
         pan.x, pan.y = 0, 0
         applyTransform()
         setStatus("Model centered.")
@@ -523,6 +657,9 @@ local function openWindow()
     button(content, "Clear animation", 12, 545, 296, function()
         if state.tab == "models" then
             state.assetSeqId = nil
+        elseif state.tab == "loc" then
+            state.locSeqId = nil
+            for _, part in ipairs(locModels) do part.animID = -1 end
         else
             state.seqId = nil
         end
@@ -585,7 +722,7 @@ local function openWindow()
     -- Shift+drag pans the model; plain drag rotates it, with optional pitch lock.
     local drag
     previewInput:Subscribe(ui.Hook.ONCLICK, function(_, x, y)
-        local pan = state.pan[state.tab == "models" and "models" or "npc"]
+        local pan = state.pan[state.tab]
         drag = {
             x = x, y = y,
             moving = Keyboard.IsAvailable() and Keyboard.IsShiftDown(),
@@ -597,7 +734,7 @@ local function openWindow()
     previewInput:Subscribe(ui.Hook.ONHOLD, function(_, x, y)
         if not drag then return end
         if drag.moving then
-            local pan = state.pan[state.tab == "models" and "models" or "npc"]
+            local pan = state.pan[state.tab]
             pan.x = drag.panX + x - drag.x
             pan.y = drag.panY + y - drag.y
             applyTransform()
@@ -629,20 +766,23 @@ local function openWindow()
     seqInfo:SetSize(-344, 22, 1, 0)
 
     local tabLine = ui.Rectangle.new(content)
-    tabLine:SetSize(144, 2)
+    tabLine:SetSize(96, 2)
     tabLine.fill = true
     tabLine.rgba = 0xF3C971FF
     tabLine.clickthrough = true
     local assetSearchBuilt = false
+    local locSearchBuilt = false
     local shownTab
     -- Switching tabs restores that tab's selected asset and Seq.
     local function showTab(tab)
         local previous = shownTab
         shownTab = tab
         state.tab = tab
+        if previous == "loc" and tab ~= "loc" then clearLocModels() end
         npcTab.hidden = tab ~= "npc"
         assetTab.hidden = tab ~= "models"
-        tabLine:SetPos(tab == "npc" and 12 or 164, 40)
+        locTab.hidden = tab ~= "loc"
+        tabLine:SetPos(tab == "npc" and 12 or (tab == "models" and 112 or 212), 40)
         if tab == "models" then
             if not assetSearchBuilt then
                 -- This is the largest catalog, so load it on first use.
@@ -651,13 +791,38 @@ local function openWindow()
                 assetSearchBuilt = true
             end
             if previous ~= "models" then setAsset(state.assetId) end
-        elseif not previous or previous == "models" then
+        elseif tab == "loc" then
+            if not locSearchBuilt then
+                locNames = locNames or require("data/loc")
+                makeSearchTabs(locTab, "Locs", "Loc", locNames, setLoc, setLocSeq, 170)
+                shapeInfo = label(locTab, "", 12, 279, 296, 0xF3C971FF)
+                shapePage = label(locTab, "", 12, 307, 166)
+                button(locTab, "Prev", 184, 306, 58, function() stepLocShape(-1) end, 22)
+                button(locTab, "Next", 248, 306, 60, function() stepLocShape(1) end, 22)
+                locSearchBuilt = true
+            end
+            if previous ~= "loc" then
+                if state.locId then
+                    setLoc(state.locId)
+                else
+                    model:SetModel(ui.ModelType.NONE, 0)
+                    model.animID = -1
+                    npcInfo.content = "Select a Loc"
+                    seqInfo.content = "No Seq selected"
+                    shapeInfo.content = "Select a Loc to view its shapes"
+                    shapePage.content = ""
+                    setDistance(state.locDistance or 1750)
+                    setStatus("Select a Loc to preview its models.")
+                end
+            end
+        elseif not previous or previous ~= "npc" then
             setNpc(state.npcId)
         end
     end
 
-    button(content, "NPC", 12, 8, 144, function() showTab("npc") end)
-    button(content, "Models", 164, 8, 144, function() showTab("models") end)
+    button(content, "NPC", 12, 8, 96, function() showTab("npc") end)
+    button(content, "Models", 112, 8, 96, function() showTab("models") end)
+    button(content, "Locs", 212, 8, 96, function() showTab("loc") end)
     showTab(state.tab)
     window:Show()
 end
@@ -670,7 +835,7 @@ local function onRibbonOpened(event)
         height = event.component.height,
     })
     ribbon:AddTitle("Model Viewer")
-    ribbon:AddText({ text = "Search NPCs, Seqs, and raw model assets in a separate window." })
+    ribbon:AddText({ text = "Search NPCs, Locs, Seqs, and raw model assets in a separate window." })
     ribbon:AddFancyButton("Open Viewer", openWindow, {
         variant = "positive", width = event.component.width - 64,
     })
