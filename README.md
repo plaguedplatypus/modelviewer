@@ -18,6 +18,12 @@ On the **Locs** tab, search for scenery by Loc ID or config name. Select a Loc t
 
 Each search starts with the full catalog. Scroll within the result list and use **Prev** and **Next** to move through every match in pages of 500. Enter an exact ID or part of a name to narrow a large catalog. A search with one result selects it automatically. Some NPC configs have no visible model. A Seq built for a different skeleton or model rig may leave it still or animate it strangely. The NPC, Models, and Locs tabs remember their own selected Seq.
 
+## Show an NPC, model, or Loc over a game tile
+
+On the **NPC**, **Models**, or **Locs** tab, press **Place on tile...**. Right-click a tile in the game view and choose **Place model here**. The button changes to **Cancel placement** while you are choosing a tile. Press **Clear placed** to remove the model. Selecting another asset or Seq on the same tab updates what is shown on the tile. On the **Locs** tab, the chosen shape is placed with all its model parts, scale, and offsets. Shapes with no direct model cannot be placed.
+
+This is a client-side UI model aligned with the selected tile, not a game-world entity. It follows the camera's angle and zoom, but game objects and characters may not hide it correctly. It hides when you move more than 40 tiles away and reappears when you return. It uses the plugin bottom layer so it stays below plugin windows.
+
 ## Adjust the view
 
 - **Zoom:** Scroll over the model preview. Scroll up to move closer; scroll down to move back.

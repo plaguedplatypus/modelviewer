@@ -1,4 +1,5 @@
 local search = require("data/search")
+local placement = require("placement")
 
 local window
 local ribbon
@@ -98,6 +99,8 @@ local function setStatus(message)
     status.content = message
 end
 
+placement.init(state, setStatus)
+
 local function applyTransform()
     -- Convert drag distance in interface units to model units at this zoom.
     -- This keeps the chosen screen position steady when the camera zooms.
@@ -120,6 +123,7 @@ local function applyTransform()
     for _, part in ipairs(locModels) do
         part:SetTransform(position, rotation, scale, 0)
     end
+    placement.setRotation(state.tab, state.yaw, state.pitch)
 end
 
 -- Rebuild the group camera when zoom or the displayed model's height changes.
@@ -132,7 +136,9 @@ local function applyCamera()
     camera:SetFOV(50, 0)
     camera:SetPosition(Vector3.new(0, centre, -state.distance), 0)
     camera:SetLookAt(Vector3.new(0, centre, 0), 0)
-    camera:SetClipPlanes(1, math.max(state.distance * 10, centre * 10))
+    -- A near plane of 1 spreads depth precision too thin at normal zoom.
+    -- Armour and clothing surfaces can then fight over which one is in front.
+    camera:SetClipPlanes(math.max(1, state.distance * 0.05), math.max(state.distance * 10, centre * 10))
     local colour = state.background
     camera.clearColour = Vector4.new(
         math.floor(colour / 65536) / 255,
@@ -191,6 +197,7 @@ local function setNpc(npcId)
     -- Keep the selected Seq while comparing NPCs. A different skeleton may
     -- display that same animation differently or not move at all.
     model.animID = state.seqId or -1
+    placement.setAsset("npc", npcId, model.animID, state.height)
     setDistance(state.npcDistance or math.max(1200, state.height * 2.5))
     npcInfo.content = "NPC " .. npcId .. "  " .. npcNames[npcId]
     seqInfo.content = state.seqId and ("Seq " .. state.seqId .. "  " .. seqNames[state.seqId])
@@ -209,6 +216,7 @@ local function setAsset(assetId)
     state.height = 700
     model:SetModel(ui.ModelType.MODEL, assetId)
     model.animID = state.assetSeqId or -1
+    placement.setAsset("models", assetId, model.animID, state.height)
     setDistance(state.assetDistance or math.max(1200, state.height * 2.5))
     npcInfo.content = "Model " .. assetId .. "  " .. modelNames[assetId]
     seqInfo.content = state.assetSeqId and ("Seq " .. state.assetSeqId .. "  " .. seqNames[state.assetSeqId])
@@ -226,6 +234,7 @@ local function setLocShape()
     npcInfo.content = "Loc " .. state.locId .. "  " .. locNames[state.locId]
 
     if not shape then
+        placement.setLoc(nil)
         model:SetModel(ui.ModelType.NONE, 0)
         model.animID = -1
         shapeInfo.content = locConfig.isMultiLoc and "MultiLoc: no direct shape" or "No model shapes"
@@ -240,6 +249,7 @@ local function setLocShape()
     shapePage.content = state.shapeIndex .. " / " .. #shapes
     local ids = locConfig:GetModelIDs(shape)
     if #ids == 0 then
+        placement.setLoc(nil)
         model:SetModel(ui.ModelType.NONE, 0)
         model.animID = -1
         seqInfo.content = "No model for this shape"
@@ -258,6 +268,7 @@ local function setLocShape()
         part.animID = model.animID
         locModels[#locModels + 1] = part
     end
+    placement.setLoc(ids, locConfig, state.locSeqId)
     seqInfo.content = state.locSeqId and ("Seq " .. state.locSeqId .. "  " .. seqNames[state.locSeqId])
         or "No Seq selected"
     setDistance(state.locDistance or 1750)
@@ -297,6 +308,7 @@ local function setSeq(seqId)
     end
     state.seqId = seqId
     model.animID = seqId
+    placement.setAnimation("npc", seqId)
     seqInfo.content = "Seq " .. seqId .. "  " .. seqNames[seqId]
     setStatus("Seq applied. An incompatible skeleton may show no movement.")
 end
@@ -310,6 +322,7 @@ local function setAssetSeq(seqId)
     end
     state.assetSeqId = seqId
     model.animID = seqId
+    placement.setAnimation("models", seqId)
     seqInfo.content = "Seq " .. seqId .. "  " .. seqNames[seqId]
     setStatus("Seq applied to model. An incompatible rig may show no movement.")
 end
@@ -322,6 +335,7 @@ local function setLocSeq(seqId)
     state.locSeqId = seqId
     model.animID = seqId
     for _, part in ipairs(locModels) do part.animID = seqId end
+    placement.setAnimation("loc", seqId)
     seqInfo.content = "Seq " .. seqId .. "  " .. seqNames[seqId]
     setStatus("Seq applied to Loc models. Some models may not animate.")
 end
@@ -577,6 +591,8 @@ local function openWindow()
     end
     -- The host can remove an interface on reload. Drop callbacks to its old
     -- components before building a new window.
+    placement.setButton(nil)
+    placement.cancel()
     window = nil
     locModels = {}
     locConfig = nil
@@ -588,18 +604,18 @@ local function openWindow()
     window = prettyui.Window.new(parent, {
         title = "Model Viewer",
         width = 900,
-        height = 690,
+        height = 725,
         minWidth = 700,
-        minHeight = 690,
+        minHeight = 725,
         xAnchor = 0.5,
         yAnchor = 0.5,
         x = -450,
-        y = -345,
+        y = -362,
         resizable = true,
         destroyOnClose = false,
     })
     local content = window.content
-    status = label(content, "", 12, 615, 866)
+    status = label(content, "", 12, 650, 866)
     status:SetPos(12, -35, 0, 1)
     status:SetSize(-18, 22, 1, 0)
 
@@ -657,11 +673,14 @@ local function openWindow()
     button(content, "Clear animation", 12, 545, 296, function()
         if state.tab == "models" then
             state.assetSeqId = nil
+            placement.setAnimation("models", -1)
         elseif state.tab == "loc" then
             state.locSeqId = nil
             for _, part in ipairs(locModels) do part.animID = -1 end
+            placement.setAnimation("loc", -1)
         else
             state.seqId = nil
+            placement.setAnimation("npc", -1)
         end
         model.animID = -1
         seqInfo.content = "No Seq selected"
@@ -689,6 +708,14 @@ local function openWindow()
     button(content, "Reset", 168, 580, 140, function()
         backgroundPicker:SetValue(defaultBackground * 256 + 255)
         setStatus("Background reset.")
+    end, 26)
+
+    local placeButton = button(content, "Place on tile...", 12, 615, 143, placement.toggle, 26)
+    placement.setButton(placeButton)
+    button(content, "Clear placed", 163, 615, 145, function()
+        placement.cancel()
+        placement.clear()
+        setStatus("Placed model removed.")
     end, 26)
 
     group = ui.ModelGroup.new(content)
@@ -778,6 +805,7 @@ local function openWindow()
         local previous = shownTab
         shownTab = tab
         state.tab = tab
+        if previous and previous ~= tab then placement.cancel() end
         if previous == "loc" and tab ~= "loc" then clearLocModels() end
         npcTab.hidden = tab ~= "npc"
         assetTab.hidden = tab ~= "models"
@@ -844,6 +872,7 @@ end
 Event.ContentLayerReady.Subscribe("modelview_ribbon", onRibbonOpened)
 
 function PluginShutdown()
+    placement.shutdown()
     Event.ContentLayerReady.Unsubscribe("modelview_ribbon")
     if ribbon then pcall(function() ribbon:Destroy() end) end
     if window then window:Destroy() end
