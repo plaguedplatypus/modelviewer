@@ -5,6 +5,21 @@ local locConfig
 local parts = {}
 
 
+local shapeNames = {
+    [0] = "WALL_STRAIGHT", [1] = "WALL_DIAGONALCORNER", [2] = "WALL_L",
+    [3] = "WALL_SQUARECORNER", [4] = "WALLDECOR_STRAIGHT_NOOFFSET",
+    [5] = "WALLDECOR_STRAIGHT_OFFSET", [6] = "WALLDECOR_DIAGONAL_OFFSET",
+    [7] = "WALLDECOR_DIAGONAL_NOOFFSET", [8] = "WALLDECOR_DIAGONAL_BOTH",
+    [9] = "WALL_DIAGONAL", [10] = "CENTREPIECE_STRAIGHT",
+    [11] = "CENTREPIECE_DIAGONAL", [12] = "ROOF_STRAIGHT",
+    [13] = "ROOF_DIAGONAL_WITH_ROOFEDGE", [14] = "ROOF_DIAGONAL",
+    [15] = "ROOF_L_CONCAVE", [16] = "ROOF_L_CONVEX",
+    [17] = "ROOF_FLAT", [18] = "ROOFEDGE_STRAIGHT",
+    [19] = "ROOFEDGE_DIAGONALCORNER", [20] = "ROOFEDGE_L",
+    [21] = "ROOFEDGE_SQUARECORNER", [22] = "GROUNDDECOR",
+    [23] = "WALL_L_ALT", [24] = "WALLDECOR_DIAGONAL_BOTH_ALT",
+}
+
 -- Each tab keeps its own Seq while sharing the preview and placed model.
 local seqFields = { npc = "seqId", models = "assetSeqId", loc = "locSeqId" }
 local seqStatus = {
@@ -98,20 +113,6 @@ function selection.clearParts()
     parts = {}
 end
 
-local shapeNames = {
-    [0] = "WALL_STRAIGHT", [1] = "WALL_DIAGONALCORNER", [2] = "WALL_L",
-    [3] = "WALL_SQUARECORNER", [4] = "WALLDECOR_STRAIGHT_NOOFFSET",
-    [5] = "WALLDECOR_STRAIGHT_OFFSET", [6] = "WALLDECOR_DIAGONAL_OFFSET",
-    [7] = "WALLDECOR_DIAGONAL_NOOFFSET", [8] = "WALLDECOR_DIAGONAL_BOTH",
-    [9] = "WALL_DIAGONAL", [10] = "CENTREPIECE_STRAIGHT",
-    [11] = "CENTREPIECE_DIAGONAL", [12] = "ROOF_STRAIGHT",
-    [13] = "ROOF_DIAGONAL_WITH_ROOFEDGE", [14] = "ROOF_DIAGONAL",
-    [15] = "ROOF_L_CONCAVE", [16] = "ROOF_L_CONVEX",
-    [17] = "ROOF_FLAT", [18] = "ROOFEDGE_STRAIGHT",
-    [19] = "ROOFEDGE_DIAGONALCORNER", [20] = "ROOFEDGE_L",
-    [21] = "ROOFEDGE_SQUARECORNER", [22] = "GROUNDDECOR",
-    [23] = "WALL_L_ALT", [24] = "WALLDECOR_DIAGONAL_BOTH_ALT",
-}
 
 -- The host can remove the previous window on reload. Its components are
 -- already gone, so forget their references before building the new preview.
