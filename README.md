@@ -8,6 +8,12 @@ Model Viewer is a RuneScape development plugin for inspecting NPCs, Locs, and ra
 2. Open the **Plugins** ribbon, choose **Model Viewer**, then press **Open Viewer**.
 3. Close the window when finished. The ribbon button opens it again.
 
+## View fonts
+
+Press **Font Viewer** below **Open Viewer** in the Model Viewer ribbon. This opens a separate window that reads font names and IDs from the active client; it does not use a saved catalog.
+
+Search by exact ID or part of a name, then select a font in the scrollable list. Type your own preview text and press **Update sample** to see it in that font. The preview wraps words to fit its panel and breaks long unspaced strings such as the alphabet sample. Use the **Background** and **Font colour** swatches to change the preview colours; **Reset colours** restores both defaults. Some game fonts contain icons or special glyphs, so ordinary letters may appear blank. Close the window when finished; the ribbon button opens it again.
+
 ## Find a model or animation
 
 On the **NPC** tab, use **NPCs** to search for an NPC ID or part of its config name, then select a result to display it. Use **Seq animations** on the same tab to find and apply a Seq to that NPC. Each view remembers its search when you switch between them. Press **Clear animation** to stop the Seq and return to the NPC's still pose. NPC and Seq IDs are checked against the active game cache before use.
@@ -16,7 +22,9 @@ On the **Models** tab, use **Model assets** to search for an asset ID or part of
 
 On the **Locs** tab, search for scenery by Loc ID or config name. Select a Loc to preview the models for its first supported shape. Use the shape **Prev** and **Next** buttons below the list to see its other forms. The shape name and number appear above those buttons. Some Locs are invisible or act as MultiLoc selectors, so they have no direct model to show. The **Seq animations** view can apply a Seq to the Loc's models, though an incompatible animation may do nothing.
 
-Each search starts with the full catalog. Scroll within the result list and use **Prev** and **Next** to move through every match in pages of 500. Enter an exact ID or part of a name to narrow a large catalog. A search with one result selects it automatically. Some NPC configs have no visible model. A Seq built for a different skeleton or model rig may leave it still or animate it strangely. The NPC, Models, and Locs tabs remember their own selected Seq.
+Each search starts with the full catalog. The viewer builds names from the active client's ID tables when it opens each catalog. Reload the plugin after a game update to refresh those names. Scroll within the result list and use **Prev** and **Next** to move through every match in pages of 500. Enter an exact ID or part of a name to narrow a large catalog. A search with one result selects it automatically. Some NPC configs have no visible model. A Seq built for a different skeleton or model rig may leave it still or animate it strangely. The NPC, Models, and Locs tabs remember their own selected Seq.
+
+To check the loaded list, clear a search box and press **Search**. The status line shows **Client catalog** and the number of names found. You can compare that count or a few IDs with the current `pan` output without waiting for a game update.
 
 ## Show an NPC, model, or Loc over a game tile
 
