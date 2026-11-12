@@ -21,11 +21,12 @@ local shapeNames = {
 }
 
 -- Each tab keeps its own Seq while sharing the preview and placed model.
-local seqFields = { npc = "seqId", models = "assetSeqId", loc = "locSeqId" }
+local seqFields = { npc = "seqId", models = "assetSeqId", loc = "locSeqId", obj = "objSeqId" }
 local seqStatus = {
     npc = "Seq applied. An incompatible skeleton may show no movement.",
     models = "Seq applied to model. An incompatible rig may show no movement.",
     loc = "Seq applied to Loc models. Some models may not animate.",
+    obj = "Seq applied to Obj. Most items have no compatible animation.",
 }
 
 -- A Seq in the catalog may be absent from this game cache. Check it before
@@ -106,6 +107,34 @@ function selection.selectModel(view, assetId)
     view.seqInfo.content = state.assetSeqId and ("Seq " .. state.assetSeqId .. "  " .. view.names.seq[state.assetSeqId])
         or "No Seq selected"
     view.setStatus("Model asset selected. Use camera distance to adjust the preview.")
+end
+
+-- An Obj ID identifies an item, not a raw model asset. The OBJECT model type
+-- lets the client choose the item's model from its Obj config.
+function selection.selectObj(view, objId)
+    local obj = config.Obj.FromID(objId)
+    if not obj then
+        view.setStatus("Obj " .. objId .. " is unavailable in this game cache.")
+        return
+    end
+
+    local state = view.state
+    if state.objId ~= objId then
+        state.objDistance = nil
+        state.pan.obj.x, state.pan.obj.y = 0, 0
+    end
+    state.objId = objId
+    -- The API does not expose item model bounds, so start with a neutral fit.
+    state.height = 700
+
+    view.model:SetModel(ui.ModelType.OBJECT, objId)
+    view.model.animID = state.objSeqId or -1
+    placement.setAsset("obj", objId, view.model.animID, state.height)
+    view.setDistance(state.objDistance or 1750)
+    view.info.content = "Obj " .. objId .. "  " .. obj.name .. "  " .. view.names.obj[objId]
+    view.seqInfo.content = state.objSeqId and ("Seq " .. state.objSeqId .. "  " .. view.names.seq[state.objSeqId])
+        or "No Seq selected"
+    view.setStatus("Obj loaded. Use camera distance to adjust the preview.")
 end
 
 function selection.clearParts()

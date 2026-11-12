@@ -1,6 +1,6 @@
 # Model Viewer
 
-Model Viewer is a RuneScape development plugin for inspecting NPCs, Locs, and raw model assets while trying Seq animations. It opens from the plugin ribbon into a movable window, so the preview and controls stay together.
+Model Viewer is a RuneScape development plugin for inspecting NPCs, Locs, Objs, and raw model assets while trying Seq animations. It opens from the plugin ribbon into a movable window, so the preview and controls stay together.
 
 ## Open the viewer
 
@@ -22,24 +22,29 @@ On the **Models** tab, use **Model assets** to search for an asset ID or part of
 
 On the **Locs** tab, search for scenery by Loc ID or config name. Select a Loc to preview the models for its first supported shape. Use the shape **Prev** and **Next** buttons below the list to see its other forms. The shape name and number appear above those buttons. Some Locs are invisible or act as MultiLoc selectors, so they have no direct model to show. The **Seq animations** view can apply a Seq to the Loc's models, though an incompatible animation may do nothing.
 
-Each search starts with the full catalog. The viewer builds names from the active client's ID tables when it opens each catalog. Reload the plugin after a game update to refresh those names. Scroll within the result list and use **Prev** and **Next** to move through every match in pages of 500. Enter an exact ID or part of a name to narrow a large catalog. A search with one result selects it automatically. Some NPC configs have no visible model. A Seq built for a different skeleton or model rig may leave it still or animate it strangely. The NPC, Models, and Locs tabs remember their own selected Seq.
+On the **Objs** tab, search for an item by Obj ID or config name. Select it to see the item's 3D model and display name. An Obj is an item definition, separate from a raw model asset; this preview shows its item model rather than its inventory icon. Use camera distance if an unusually small or large item needs a closer view. You can try a Seq, but most items have no compatible animation.
+
+Each search starts with the full catalog. The viewer builds names from the active client's ID tables when it opens each catalog. Reload the plugin after a game update to refresh those names. Scroll within the result list and use **Prev** and **Next** to move through every match in pages of 500. Enter an exact ID or part of a name to narrow a large catalog. A search with one result selects it automatically. Some NPC and Obj configs have no visible model. A Seq built for a different skeleton or model rig may leave it still or animate it strangely. Every asset tab remembers its own selected Seq.
 
 To check the loaded list, clear a search box and press **Search**. The status line shows **Client catalog** and the number of names found. You can compare that count or a few IDs with the current `pan` output without waiting for a game update.
 
-## Show an NPC, model, or Loc over a game tile
+## Show an NPC, model, Loc, or Obj over a game tile
 
-On the **NPC**, **Models**, or **Locs** tab, press **Place on tile...**. Right-click a tile in the game view and choose **Place model here**. The button changes to **Cancel placement** while you are choosing a tile. Press **Clear placed** to remove the model. Selecting another asset or Seq on the same tab updates what is shown on the tile. On the **Locs** tab, the chosen shape is placed with all its model parts, scale, and offsets. Shapes with no direct model cannot be placed.
+On any asset tab, press **Place on tile...**. Right-click a tile in the game view and choose **Place model here**. Repeat this to add more models, including different NPCs, raw models, Locs, and Objs. The button changes to **Cancel placement** while you are choosing a tile. **Remove last** removes the most recently placed model; **Clear all** removes every placed model.
 
-This is a client-side UI model aligned with the selected tile, not a game-world entity. It follows the camera's angle and zoom, but game objects and characters may not hide it correctly. It hides when you move more than 40 tiles away and reappears when you return. It uses the plugin bottom layer so it stays below plugin windows.
+The most recently added placement follows changes to the selected asset, Seq, shape, and rotation on its tab while it remains placed. Earlier placements keep their appearance, so you can select another asset and place it without changing the ones already in the scene. A Loc is placed with all the model parts, scale, and offsets for its chosen shape. Shapes with no direct model cannot be placed; selecting one removes the active placement if it is a Loc.
+
+These are client-side UI models aligned with their selected tiles, not game-world entities. They follow the camera's angle and zoom. When placed models overlap, the one on the nearer tile draws in front. Because each model is a separate UI overlay, intersecting models may still overlap imperfectly, and game objects and characters may not hide them correctly. Each hides when you move more than 40 tiles away and reappears when you return. They use the plugin bottom layer so they stay below plugin windows.
 
 ## Adjust the view
 
 - **Zoom:** Scroll over the model preview. Scroll up to move closer; scroll down to move back.
 - **Camera distance:** Enter a positive number and press **Apply** for an exact view. Larger values move the camera back. Use **Fit model** to return to an estimated starting distance.
+- **Camera height:** Drag the **Height** slider on the right side of the preview. Move it up to raise the camera or down to lower it, from −1500 to +1500 in steps of 25. **+0** uses the usual starting height. Each tab remembers its adjustment while the viewer is open, so a height chosen for Objs stays in place as you browse other Objs.
 - **Rotation:** Drag the model to turn it. **Lock pitch** starts checked, so dragging or applying a yaw angle keeps the current tilt. Uncheck it to tilt by dragging or enter a pitch in degrees. Enter a yaw in degrees and press **Apply** for an exact turn.
 - **Position:** Hold **Shift** while dragging the preview to move the NPC or model. Press **Center model** to reset its position. Each tab keeps its own position until another NPC or model is selected.
 - **Background:** Click the colour swatch below **Clear animation**, choose a colour, and confirm it in the picker. Press **Reset** to restore the original background. The preview remembers the chosen colour while the viewer is open.
 - **Window size:** Drag an edge or corner of the viewer window to make the model preview larger or smaller. The search and camera controls stay on the left.
 
-The game API does not provide rendered model bounds, so **Fit model** estimates framing from the NPC's overlay height or a neutral height for raw assets and Locs. Use camera distance when the estimate does not fit the model.
+The game API does not provide rendered model bounds, so **Fit model** estimates framing from the NPC's overlay height or a neutral height for raw assets, Locs, and Objs. Use camera distance and height when the estimate does not fit the model.
 

@@ -8,6 +8,7 @@ local npcNames
 local seqNames
 local modelNames
 local locNames
+local objNames
 local model
 local group
 local cameraId
@@ -21,29 +22,34 @@ local shapeInfo
 local shapePage
 local defaultBackground = 0x12110F
 
--- Each asset tab keeps its own camera distance and pan settings.
+-- Each asset tab keeps its own camera distance, height adjustment, and pan.
 local state = {
     npcId = 0,
     assetId = 0,
     locId = nil,
+    objId = nil,
     seqId = nil,
     assetSeqId = nil,
     locSeqId = nil,
+    objSeqId = nil,
     tab = "npc",
     distance = 2200,
     npcDistance = nil,
     assetDistance = nil,
     locDistance = nil,
+    objDistance = nil,
     shapeIndex = 1,
     height = 700,
     yaw = 0,
     pitch = 0,
     lockPitch = true,
     background = defaultBackground,
+    heightShift = { npc = 0, models = 0, loc = 0, obj = 0 },
     pan = {
         npc = { x = 0, y = 0 },
         models = { x = 0, y = 0 },
         loc = { x = 0, y = 0 },
+        obj = { x = 0, y = 0 },
     },
 }
 
@@ -109,9 +115,10 @@ end
 
 -- Rebuild the group camera when zoom or the displayed model's height changes.
 local function applyCamera()
-    -- The game does not expose model bounds. NPC overlay height is a useful
-    -- starting point; raw assets use a neutral estimate.
-    local centre = state.height / 2
+    -- Item models sit near their origin. Looking above it puts small Objs near
+    -- the bottom of the preview; other tabs use their height estimate. The
+    -- slider adjusts that starting point without changing the model itself.
+    local centre = (state.tab == "obj" and 0 or state.height / 2) + state.heightShift[state.tab]
     local cameraType = ui.ModelCamera or ui.ModelCameraInfo
     local camera = cameraType.new()
     camera:SetFOV(50, 0)
@@ -143,8 +150,10 @@ local function setDistance(distance)
         state.npcDistance = distance
     elseif state.tab == "models" then
         state.assetDistance = distance
-    else
+    elseif state.tab == "loc" then
         state.locDistance = distance
+    else
+        state.objDistance = distance
     end
     distanceField.content = string.format("%.0f", distance)
     applyCamera()
@@ -154,7 +163,7 @@ end
 view.setStatus = setStatus
 view.setDistance = setDistance
 
--- NPCs, Locs, Seqs, and raw assets use the same sparse-ID catalog search.
+-- NPCs, Locs, Objs, Seqs, and raw assets use the same sparse-ID catalog search.
 local function makeSearch(parent, kind, names, y, selected, listHeight)
     label(parent, kind, 12, y, 68, 0xF3C971FF)
     local pageText = label(parent, "", 74, y, 104)
@@ -454,6 +463,11 @@ function viewer.openWindow()
     locTab:SetSize(326, 340)
     locTab.hidden = true
 
+    local objTab = ui.Layer.new(content)
+    objTab:SetPos(0, 40)
+    objTab:SetSize(326, 340)
+    objTab.hidden = true
+
     label(content, "Camera distance", 12, 386, 296)
     distanceField = field(content, "2200", 12, 410, 211)
     button(content, "Apply", 231, 410, 77, applyDistance)
@@ -497,7 +511,7 @@ function viewer.openWindow()
     label(content, "Background", 12, 581, 120)
     local background = ui.Rectangle.new(content)
     background:SetPos(334, 12)
-    background:SetSize(-340, -124, 1, 1)
+    background:SetSize(-398, -124, 1, 1)
     background.fill = true
     background.rgba = state.background * 256 + 255
 
@@ -519,15 +533,23 @@ function viewer.openWindow()
 
     local placeButton = button(content, "Place on tile...", 12, 615, 143, placement.toggle, 26)
     placement.setButton(placeButton)
-    button(content, "Clear placed", 163, 615, 145, function()
+    button(content, "Remove last", 163, 615, 80, function()
         placement.cancel()
-        placement.clear()
-        setStatus("Placed model removed.")
+        if placement.removeLast() then
+            setStatus("Most recent placement removed.")
+        else
+            setStatus("No placed models to remove.")
+        end
+    end, 26)
+    button(content, "Clear all", 247, 615, 61, function()
+        placement.cancel()
+        local count = placement.clear()
+        setStatus(count > 0 and (count .. " placed models removed.") or "No placed models to remove.")
     end, 26)
 
     group = ui.ModelGroup.new(content)
     group:SetPos(338, 16)
-    group:SetSize(-348, -132, 1, 1)
+    group:SetSize(-402, -132, 1, 1)
     group.clickthrough = true
     model = ui.Model.new(group)
     model:SetSize(0, 0, 1, 1)
@@ -544,7 +566,7 @@ function viewer.openWindow()
     -- layer follows the whole preview so every visible part gets the controls.
     local previewInput = ui.Layer.new(content)
     previewInput:SetPos(338, 16)
-    previewInput:SetSize(-348, -132, 1, 1)
+    previewInput:SetSize(-402, -132, 1, 1)
     previewInput.clickthrough = false
 
     -- Positive wheel deltas scroll down in the client, so they move the camera back.
@@ -594,6 +616,59 @@ function viewer.openWindow()
         return false
     end)
 
+    local heightLabel = label(content, "Height", 0, 16, 55)
+    heightLabel:SetPos(-59, 16, 1, 0)
+    local heightValue = label(content, "+0", 0, 0, 55)
+    heightValue:SetPos(-59, -174, 1, 1)
+
+    -- The native slider is horizontal. Keep this narrow vertical track beside
+    -- the preview so it does not push the placement controls out of the window.
+    local heightTrack = ui.Layer.new(content)
+    heightTrack:SetPos(-46, 51, 1, 0)
+    heightTrack:SetSize(24, -230, 0, 1)
+    heightTrack.clickthrough = false
+    local trackFill = ui.Rectangle.new(heightTrack)
+    trackFill:SetPos(8, 0)
+    trackFill:SetSize(8, 0, 0, 1)
+    trackFill.fill = true
+    trackFill.rgba = 0x383127FF
+    trackFill.clickthrough = true
+    local midpoint = ui.Rectangle.new(heightTrack)
+    midpoint:SetSize(24, 2)
+    midpoint.fill = true
+    midpoint.rgba = 0x8E7853FF
+    midpoint.clickthrough = true
+    local thumb = ui.Rectangle.new(heightTrack)
+    thumb:SetSize(20, 14)
+    thumb.fill = true
+    thumb.rgba = 0xCDA753FF
+    thumb.clickthrough = false
+
+    local function drawHeight()
+        local travel = heightTrack.height - 14
+        if travel <= 0 then return end
+        local value = state.heightShift[state.tab]
+        midpoint:SetPos(0, math.floor(heightTrack.height / 2))
+        thumb:SetPos(2, math.floor((1500 - value) * travel / 3000 + 0.5))
+        heightValue.content = string.format("%+d", value)
+    end
+
+    local function chooseHeight(y)
+        local travel = heightTrack.height - 14
+        if travel <= 0 then return false end
+        local fraction = math.max(0, math.min(1, (y - 7) / travel))
+        state.heightShift[state.tab] = math.floor((1500 - fraction * 3000) / 25 + 0.5) * 25
+        drawHeight()
+        applyCamera()
+        return false
+    end
+
+    heightTrack:Subscribe(ui.Hook.ONRESIZE, drawHeight)
+    heightTrack:Subscribe(ui.Hook.ONCLICK, function(_, _, y) return chooseHeight(y) end)
+    heightTrack:Subscribe(ui.Hook.ONHOLD, function(_, _, y) return chooseHeight(y) end)
+    thumb:Subscribe(ui.Hook.ONCLICK, function(_, _, y) return chooseHeight(thumb.y + y) end)
+    thumb:Subscribe(ui.Hook.ONHOLD, function(_, _, y) return chooseHeight(thumb.y + y) end)
+
     npcInfo = label(content, "", 338, 545, 540, 0xF3C971FF)
     seqInfo = label(content, "No Seq selected", 338, 568, 540)
     npcInfo:SetPos(338, -105, 0, 1)
@@ -604,24 +679,28 @@ function viewer.openWindow()
     view.seqInfo = seqInfo
 
     local tabLine = ui.Rectangle.new(content)
-    tabLine:SetSize(96, 2)
+    tabLine:SetSize(71, 2)
     tabLine.fill = true
     tabLine.rgba = 0xF3C971FF
     tabLine.clickthrough = true
     local assetSearchBuilt = false
     local locSearchBuilt = false
+    local objSearchBuilt = false
+    local tabPos = { npc = 12, models = 87, loc = 162, obj = 237 }
     local shownTab
     -- Switching tabs restores that tab's selected asset and Seq.
     local function showTab(tab)
         local previous = shownTab
         shownTab = tab
         state.tab = tab
+        drawHeight()
         if previous and previous ~= tab then placement.cancel() end
         if previous == "loc" and tab ~= "loc" then selection.clearParts() end
         npcTab.hidden = tab ~= "npc"
         assetTab.hidden = tab ~= "models"
         locTab.hidden = tab ~= "loc"
-        tabLine:SetPos(tab == "npc" and 12 or (tab == "models" and 112 or 212), 40)
+        objTab.hidden = tab ~= "obj"
+        tabLine:SetPos(tabPos[tab], 40)
         if tab == "models" then
             if not assetSearchBuilt then
                 -- This is the largest catalog, so load it on first use.
@@ -633,6 +712,27 @@ function viewer.openWindow()
                 assetSearchBuilt = true
             end
             if previous ~= "models" then selection.selectModel(view, state.assetId) end
+        elseif tab == "obj" then
+            if not objSearchBuilt then
+                objNames = objNames or search.load("Obj")
+                view.names.obj = objNames
+                makeSearchTabs(objTab, "Objs", "Obj", objNames,
+                    function(objId) selection.selectObj(view, objId) end,
+                    function(seqId) selection.setSeq(view, "obj", seqId) end)
+                objSearchBuilt = true
+            end
+            if previous ~= "obj" then
+                if state.objId then
+                    selection.selectObj(view, state.objId)
+                else
+                    model:SetModel(ui.ModelType.NONE, 0)
+                    model.animID = -1
+                    npcInfo.content = "Select an Obj"
+                    seqInfo.content = "No Seq selected"
+                    setDistance(state.objDistance or 1750)
+                    setStatus("Select an Obj to preview its item model.")
+                end
+            end
         elseif tab == "loc" then
             if not locSearchBuilt then
                 locNames = locNames or search.load("Loc")
@@ -667,11 +767,13 @@ function viewer.openWindow()
         end
     end
 
-    button(content, "NPC", 12, 8, 96, function() showTab("npc") end)
-    button(content, "Models", 112, 8, 96, function() showTab("models") end)
-    button(content, "Locs", 212, 8, 96, function() showTab("loc") end)
+    button(content, "NPC", 12, 8, 71, function() showTab("npc") end)
+    button(content, "Models", 87, 8, 71, function() showTab("models") end)
+    button(content, "Locs", 162, 8, 71, function() showTab("loc") end)
+    button(content, "Objs", 237, 8, 71, function() showTab("obj") end)
     showTab(state.tab)
     window:Show()
+    drawHeight()
 end
 
 function viewer.shutdown()

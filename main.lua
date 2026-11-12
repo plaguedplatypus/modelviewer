@@ -11,7 +11,7 @@ local function onRibbonOpened(event)
         height = event.component.height,
     })
     ribbon:AddTitle("Model Viewer")
-    ribbon:AddText({ text = "Search NPCs, Locs, Seqs, and raw model assets in a separate window." })
+    ribbon:AddText({ text = "Search NPCs, Locs, Objs, Seqs, and raw model assets in a separate window." })
     ribbon:AddFancyButton("Open Viewer", modelviewer.openWindow, {
         variant = "positive", width = event.component.width - 64,
     })
