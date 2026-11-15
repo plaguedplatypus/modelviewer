@@ -22,7 +22,7 @@ local shapeInfo
 local shapePage
 local defaultBackground = 0x12110F
 
--- Each asset tab keeps its own camera distance, height adjustment, and pan.
+-- Each asset tab keeps its own model angle, camera distance, height, and pan.
 local state = {
     npcId = 0,
     assetId = 0,
@@ -40,11 +40,16 @@ local state = {
     objDistance = nil,
     shapeIndex = 1,
     height = 700,
-    yaw = 0,
-    pitch = 0,
     lockPitch = true,
     background = defaultBackground,
     heightShift = { npc = 0, models = 0, loc = 0, obj = 0 },
+    fitCentre = {},
+    rotation = {
+        npc = { yaw = 0, pitch = 0 },
+        models = { yaw = 0, pitch = 0 },
+        loc = { yaw = 0, pitch = 0 },
+        obj = { yaw = 0, pitch = 0 },
+    },
     pan = {
         npc = { x = 0, y = 0 },
         models = { x = 0, y = 0 },
@@ -98,27 +103,84 @@ end
 
 placement.init(state, setStatus)
 
-local function applyTransform()
-    -- Convert drag distance in interface units to model units at this zoom.
-    -- This keeps the chosen screen position steady when the camera zooms.
-    local pan = state.pan[state.tab]
-    local worldPerUnit = state.distance * 2 * math.tan(math.rad(25)) / group.height
-    local position = Vector3.new(pan.x * worldPerUnit, -pan.y * worldPerUnit, 0)
-    local rotation = Vector3.new(math.rad(state.yaw), math.rad(state.pitch), 0)
-    if state.tab == "loc" then
-        selection.applyLocTransform(view, position, rotation)
-    else
-        model:SetTransform(position, rotation, Vector3.new(1, 1, 1), 0)
-    end
-    placement.setRotation(state.tab, state.yaw, state.pitch)
+local function getCentre()
+    return (state.fitCentre[state.tab] or (state.tab == "obj" and 0 or state.height / 2))
+        + state.heightShift[state.tab]
 end
 
--- Rebuild the group camera when zoom or the displayed model's height changes.
+-- Picking bounds are available for some NPCs and Locs, but they are not
+-- rendered model bounds. Use their tile footprint as a minimum estimate.
+local function getFitBounds()
+    local asset, spanX, spanZ, height
+    if state.tab == "npc" then
+        asset = config.NPC.FromID(state.npcId)
+        if not asset then return end
+        spanX = math.max(1, asset.gridSize) * 512
+        spanZ = spanX
+        height = math.max(700, asset.overlayHeight, spanX * 1.6)
+    elseif state.tab == "loc" and state.locId then
+        asset = config.Loc.FromID(state.locId)
+        if not asset then return end
+        spanX = math.max(1, asset.width) * 512
+        spanZ = math.max(1, asset.length) * 512
+        height = math.max(700, math.max(spanX, spanZ) * 2.3)
+    else
+        return
+    end
+
+    local minX, maxX = -spanX / 2, spanX / 2
+    local minY, maxY = 0, height
+    local minZ, maxZ = -spanZ / 2, spanZ / 2
+    local bounds = asset.customBounding
+    if bounds then
+        minX, maxX = math.min(minX, bounds.minX), math.max(maxX, bounds.maxX)
+        minY, maxY = math.min(minY, bounds.minY), math.max(maxY, bounds.maxY)
+        minZ, maxZ = math.min(minZ, bounds.minZ), math.max(maxZ, bounds.maxZ)
+    end
+    return minX, maxX, minY, maxY, minZ, maxZ
+end
+
+-- Model pitch follows the model's yawed local axis. Convert a tilt around the
+-- screen's horizontal axis to yaw/pitch/roll so it keeps its direction at 180 degrees.
+local function modelRotation(angle)
+    local yaw, pitch = math.rad(angle.yaw), math.rad(angle.pitch)
+    local sinYaw, cosYaw = math.sin(yaw), math.cos(yaw)
+    local sinPitch, cosPitch = math.sin(pitch), math.cos(pitch)
+    local localPitch = math.max(-1, math.min(1, sinPitch * cosYaw))
+    return Vector3.new(
+        math.atan(sinYaw, cosPitch * cosYaw),
+        math.asin(localPitch),
+        math.atan(sinPitch * sinYaw, cosPitch)
+    )
+end
+
+local function applyPreviewTransform()
+    -- Convert drag distance in interface units to model units at this zoom.
+    -- Compensate for pitch around the same centre the camera looks at.
+    local pan = state.pan[state.tab]
+    local angle = state.rotation[state.tab]
+    local pitch = math.rad(angle.pitch)
+    local centre = getCentre()
+    local worldPerUnit = state.distance * 2 * math.tan(math.rad(25)) / group.height
+    local position = Vector3.new(
+        pan.x * worldPerUnit,
+        -pan.y * worldPerUnit + centre * (1 - math.cos(pitch)),
+        -centre * math.sin(pitch)
+    )
+    angle.transform = modelRotation(angle)
+    if state.tab == "loc" then
+        selection.applyLocTransform(view, position, angle.transform)
+    else
+        model:SetTransform(position, angle.transform, Vector3.new(1, 1, 1), 0)
+    end
+end
+
+-- Rebuild the fixed group camera when zoom or the displayed model's height changes.
 local function applyCamera()
     -- Item models sit near their origin. Looking above it puts small Objs near
     -- the bottom of the preview; other tabs use their height estimate. The
     -- slider adjusts that starting point without changing the model itself.
-    local centre = (state.tab == "obj" and 0 or state.height / 2) + state.heightShift[state.tab]
+    local centre = getCentre()
     local cameraType = ui.ModelCamera or ui.ModelCameraInfo
     local camera = cameraType.new()
     camera:SetFOV(50, 0)
@@ -157,14 +219,14 @@ local function setDistance(distance)
     end
     distanceField.content = string.format("%.0f", distance)
     applyCamera()
-    applyTransform()
+    applyPreviewTransform()
 end
 
 view.setStatus = setStatus
 view.setDistance = setDistance
 
 -- NPCs, Locs, Objs, Seqs, and raw assets use the same sparse-ID catalog search.
-local function makeSearch(parent, kind, names, y, selected, listHeight)
+local function makeSearch(parent, kind, names, y, selected, getSelected, listHeight)
     label(parent, kind, 12, y, 68, 0xF3C971FF)
     local pageText = label(parent, "", 74, y, 104)
     local input = field(parent, "", 12, y + 24, 218)
@@ -223,17 +285,20 @@ local function makeSearch(parent, kind, names, y, selected, listHeight)
         rows[index] = { root = row, shade = shade, text = text }
         row:Subscribe(ui.Hook.ONCLICK, function()
             local matchId = rows[rowIndex].id
-            if matchId then selected(matchId) end
+            if matchId then
+                selected(matchId)
+                renderRows()
+            end
             return false
         end)
         row:Subscribe(ui.Hook.ONSCROLLWHEEL, function(_, delta)
             return scrollBy(delta)
         end)
         row:Subscribe(ui.Hook.ONMOUSEOVER, function()
-            shade.rgba = 0x494039FF
+            shade.rgba = rows[rowIndex].isSelected and 0x806538FF or 0x494039FF
         end)
         row:Subscribe(ui.Hook.ONMOUSELEAVE, function()
-            shade.rgba = 0x282521FF
+            shade.rgba = rows[rowIndex].isSelected and 0x66502DFF or 0x282521FF
         end)
     end
 
@@ -257,11 +322,14 @@ local function makeSearch(parent, kind, names, y, selected, listHeight)
     renderRows = function()
         local count = last - first + 1
         local maxOffset = math.max(1, count - visibleRows + 1)
+        local selectedId = getSelected()
         for index, row in ipairs(rows) do
             local resultIndex = first + offset + index - 2
             row.id = resultIndex <= last and matches[resultIndex] or nil
             row.root.hidden = row.id == nil
-            row.shade.rgba = 0x282521FF
+            row.isSelected = row.id ~= nil and row.id == selectedId
+            row.shade.rgba = row.isSelected and 0x66502DFF or 0x282521FF
+            row.text.rgba = row.isSelected and 0xF3C971FF or 0xE8DDC7FF
             if row.id then row.text.content = row.id .. "  " .. names[row.id] end
         end
         track.hidden = count <= visibleRows
@@ -329,9 +397,19 @@ local function makeSearch(parent, kind, names, y, selected, listHeight)
 
     local function runSearch()
         matches = search.find(names, input.content)
+        if kind == "Loc" then
+            local visible = {}
+            for _, locId in ipairs(matches) do
+                if selection.findLocShape(locId) then visible[#visible + 1] = locId end
+            end
+            matches = visible
+        end
         page = 1
         showPage()
-        if #matches == 1 then selected(matches[1]) end
+        if #matches == 1 then
+            selected(matches[1])
+            renderRows()
+        end
     end
 
     button(parent, "Search", 238, y + 24, 70, runSearch)
@@ -342,10 +420,13 @@ local function makeSearch(parent, kind, names, y, selected, listHeight)
         if page * pageSize < #matches then page = page + 1; showPage() end
     end, 22)
     runSearch()
+    return renderRows
 end
 
 -- Each asset tab uses the same two search views. Each view keeps its
 -- own query and scroll position while the selected asset stays in the preview.
+local assetFields = { NPC = "npcId", Model = "assetId", Loc = "locId", Obj = "objId" }
+local seqFields = { NPC = "seqId", Model = "assetSeqId", Loc = "locSeqId", Obj = "objSeqId" }
 local function makeSearchTabs(parent, title, kind, names, selected, seqSelected, listHeight)
     local assetSearch = ui.Layer.new(parent)
     assetSearch:SetPos(0, 34)
@@ -372,8 +453,10 @@ local function makeSearchTabs(parent, title, kind, names, selected, seqSelected,
         searchLine:SetPos(164, 29)
     end, 24)
 
-    makeSearch(assetSearch, kind, names, 5, selected, listHeight or 226)
-    makeSearch(seqSearch, "Seq", seqNames, 5, seqSelected, listHeight or 226)
+    makeSearch(assetSearch, kind, names, 5, selected,
+        function() return state[assetFields[kind]] end, listHeight or 226)
+    return makeSearch(seqSearch, "Seq", seqNames, 5, seqSelected,
+        function() return state[seqFields[kind]] end, listHeight or 226)
 end
 
 local function numberFrom(input, description)
@@ -394,16 +477,17 @@ end
 
 local function applyRotation()
     local yaw = tonumber(yawField.content)
-    -- Lock pitch applies to typed rotation too, not only mouse dragging.
-    local pitch = state.lockPitch and state.pitch or tonumber(pitchField.content)
+    -- Lock pitch applies to typed rotation and dragging.
+    local angle = state.rotation[state.tab]
+    local pitch = state.lockPitch and angle.pitch or tonumber(pitchField.content)
     if not yaw or not pitch or math.abs(yaw) == math.huge or math.abs(pitch) == math.huge then
         setStatus("Yaw and pitch must be numbers in degrees.")
         return
     end
-    state.yaw = yaw
-    state.pitch = pitch
-    applyTransform()
-    setStatus("Rotation applied.")
+    angle.yaw, angle.pitch = yaw, pitch
+    applyPreviewTransform()
+    placement.setRotation(state.tab, angle)
+    setStatus("Model rotation applied.")
 end
 
 -- PrettyUI hides this window on close, so reopening it keeps the player's
@@ -444,12 +528,13 @@ function viewer.openWindow()
     status:SetPos(12, -35, 0, 1)
     status:SetSize(-18, 22, 1, 0)
 
-    -- Each tab owns its search controls; the preview and transform controls
+    -- Each tab owns its search controls; the preview and model controls
     -- stay in place so an asset can be inspected with the same gestures.
+    local seqRefresh = {}
     local npcTab = ui.Layer.new(content)
     npcTab:SetPos(0, 40)
     npcTab:SetSize(326, 340)
-    makeSearchTabs(npcTab, "NPCs", "NPC", npcNames,
+    seqRefresh.npc = makeSearchTabs(npcTab, "NPCs", "NPC", npcNames,
         function(npcId) selection.selectNpc(view, npcId) end,
         function(seqId) selection.setSeq(view, "npc", seqId) end)
 
@@ -472,9 +557,9 @@ function viewer.openWindow()
     distanceField = field(content, "2200", 12, 410, 211)
     button(content, "Apply", 231, 410, 77, applyDistance)
 
-    label(content, "Rotation: yaw / pitch", 12, 447, 180)
-    yawField = field(content, string.format("%.1f", state.yaw), 12, 471, 72)
-    pitchField = field(content, string.format("%.1f", state.pitch), 92, 471, 72)
+    label(content, "Model yaw / pitch", 12, 447, 180)
+    yawField = field(content, string.format("%.1f", state.rotation[state.tab].yaw), 12, 471, 72)
+    pitchField = field(content, string.format("%.1f", state.rotation[state.tab].pitch), 92, 471, 72)
     pitchField.enabled = not state.lockPitch
     button(content, "Apply", 172, 471, 65, applyRotation)
 
@@ -489,26 +574,17 @@ function viewer.openWindow()
     pitchLock:Subscribe(ui.Hook.ONBUTTONPRESSED, function()
         state.lockPitch = pitchLock.value
         pitchField.enabled = not state.lockPitch
-        if state.lockPitch then pitchField.content = string.format("%.1f", state.pitch) end
+        if state.lockPitch then pitchField.content = string.format("%.1f", state.rotation[state.tab].pitch) end
     end)
 
-    button(content, "Fit model", 12, 508, 140, function()
-        setDistance(math.max(1200, state.height * 2.5))
-        setStatus("Camera fitted using an approximate model height.")
-    end)
-    button(content, "Center model", 160, 508, 148, function()
-        local pan = state.pan[state.tab]
-        pan.x, pan.y = 0, 0
-        applyTransform()
-        setStatus("Model centered.")
-    end)
-    button(content, "Clear animation", 12, 545, 296, function()
+    button(content, "Clear animation", 12, 508, 296, function()
         selection.clearSeq(view, state.tab)
+        if seqRefresh[state.tab] then seqRefresh[state.tab]() end
         seqInfo.content = "No Seq selected"
         setStatus("Animation cleared.")
     end)
 
-    label(content, "Background", 12, 581, 120)
+    label(content, "Background", 12, 545, 120)
     local background = ui.Rectangle.new(content)
     background:SetPos(334, 12)
     background:SetSize(-398, -124, 1, 1)
@@ -516,7 +592,7 @@ function viewer.openWindow()
     background.rgba = state.background * 256 + 255
 
     local backgroundPicker = prettyui.ColourPicker.new(content, {
-        x = 134, y = 580, buttonSize = 26,
+        x = 134, y = 544, buttonSize = 26,
         value = state.background * 256 + 255,
         alphaSlider = false,
         windowTitle = "Model preview background",
@@ -526,14 +602,14 @@ function viewer.openWindow()
             applyCamera()
         end,
     })
-    button(content, "Reset", 168, 580, 140, function()
+    button(content, "Reset", 168, 544, 140, function()
         backgroundPicker:SetValue(defaultBackground * 256 + 255)
         setStatus("Background reset.")
     end, 26)
 
-    local placeButton = button(content, "Place on tile...", 12, 615, 143, placement.toggle, 26)
+    local placeButton = button(content, "Place on tile...", 12, 581, 143, placement.toggle, 26)
     placement.setButton(placeButton)
-    button(content, "Remove last", 163, 615, 80, function()
+    button(content, "Remove last", 163, 581, 80, function()
         placement.cancel()
         if placement.removeLast() then
             setStatus("Most recent placement removed.")
@@ -541,7 +617,7 @@ function viewer.openWindow()
             setStatus("No placed models to remove.")
         end
     end, 26)
-    button(content, "Clear all", 247, 615, 61, function()
+    button(content, "Clear all", 247, 581, 61, function()
         placement.cancel()
         local count = placement.clear()
         setStatus(count > 0 and (count .. " placed models removed.") or "No placed models to remove.")
@@ -557,7 +633,7 @@ function viewer.openWindow()
     view.group = group
     view.model = model
     -- Keep Shift+drag panning at the same screen offset as the preview grows.
-    group:Subscribe(ui.Hook.ONRESIZE, function() applyTransform() end)
+    group:Subscribe(ui.Hook.ONRESIZE, function() applyPreviewTransform() end)
     cameraId = nil
     model:SetModel(ui.ModelType.NPC_MODEL, state.npcId)
     model.animID = -1
@@ -577,7 +653,7 @@ function viewer.openWindow()
         return false
     end)
 
-    -- Shift+drag pans the model; plain drag rotates it, with optional pitch lock.
+    -- Plain drag turns the model; Shift+drag pans it across the preview.
     local drag
     previewInput:Subscribe(ui.Hook.ONCLICK, function(_, x, y)
         local pan = state.pan[state.tab]
@@ -585,7 +661,7 @@ function viewer.openWindow()
             x = x, y = y,
             moving = Keyboard.IsAvailable() and Keyboard.IsShiftDown(),
             panX = pan.x, panY = pan.y,
-            yaw = state.yaw, pitch = state.pitch,
+            yaw = state.rotation[state.tab].yaw, pitch = state.rotation[state.tab].pitch,
         }
         return false
     end)
@@ -595,37 +671,42 @@ function viewer.openWindow()
             local pan = state.pan[state.tab]
             pan.x = drag.panX + x - drag.x
             pan.y = drag.panY + y - drag.y
-            applyTransform()
+            applyPreviewTransform()
             return false
         end
-        state.yaw = drag.yaw - (x - drag.x) * 0.6
+        local angle = state.rotation[state.tab]
+        local yaw = drag.yaw - (x - drag.x) * 1.0
+        local pitch = angle.pitch
         if not state.lockPitch then
-            state.pitch = drag.pitch - (y - drag.y) * 0.6
+            pitch = math.max(-89, math.min(89, drag.pitch - (y - drag.y) * 1.0))
         end
-        applyTransform()
+        if angle.yaw == yaw and angle.pitch == pitch then return false end
+        angle.yaw, angle.pitch = yaw, pitch
+        applyPreviewTransform()
+        placement.setRotation(state.tab, angle)
+        yawField.content = string.format("%.1f", yaw)
+        pitchField.content = string.format("%.1f", pitch)
         return false
     end)
     previewInput:Subscribe(ui.Hook.ONRELEASE, function()
         if not drag then return end
-        local moved = drag.moving
         drag = nil
-        if not moved then
-            yawField.content = string.format("%.1f", state.yaw)
-            pitchField.content = string.format("%.1f", state.pitch)
-        end
         return false
     end)
 
-    local heightLabel = label(content, "Height", 0, 16, 55)
-    heightLabel:SetPos(-59, 16, 1, 0)
+    -- Native text does not break at a newline; use one label per line.
+    local adjustLabel = label(content, "Adjust", 0, 16, 58)
+    adjustLabel:SetPos(-60, 16, 1, 0)
+    local centerLabel = label(content, "Center", 0, 36, 58)
+    centerLabel:SetPos(-60, 36, 1, 0)
     local heightValue = label(content, "+0", 0, 0, 55)
     heightValue:SetPos(-59, -174, 1, 1)
 
     -- The native slider is horizontal. Keep this narrow vertical track beside
     -- the preview so it does not push the placement controls out of the window.
     local heightTrack = ui.Layer.new(content)
-    heightTrack:SetPos(-46, 51, 1, 0)
-    heightTrack:SetSize(24, -230, 0, 1)
+    heightTrack:SetPos(-46, 65, 1, 0)
+    heightTrack:SetSize(24, -244, 0, 1)
     heightTrack.clickthrough = false
     local trackFill = ui.Rectangle.new(heightTrack)
     trackFill:SetPos(8, 0)
@@ -653,6 +734,77 @@ function viewer.openWindow()
         heightValue.content = string.format("%+d", value)
     end
 
+    local centreButton = button(content, "Center", 346, 0, 84, function()
+        local pan = state.pan[state.tab]
+        pan.x, pan.y = 0, 0
+        applyPreviewTransform()
+        setStatus("Model centered.")
+    end, 26)
+    centreButton:SetPos(346, -150, 0, 1)
+
+    local fitButton = button(content, "Fit model", 0, 0, 100, function()
+        local minX, maxX, minY, maxY, minZ, maxZ = getFitBounds()
+        local pan = state.pan[state.tab]
+        pan.x, pan.y = 0, 0
+        state.heightShift[state.tab] = 0
+        if not minX then
+            -- Raw models and Objs have no size data in the client API.
+            state.fitCentre[state.tab] = nil
+            drawHeight()
+            setDistance(math.max(1200, state.height * 2.5))
+            setStatus("No size data for this model; use zoom and Adjust Center.")
+            return
+        end
+
+        local angle = state.rotation[state.tab]
+        local yaw, pitch = math.rad(angle.yaw), math.rad(angle.pitch)
+        local xRadius = math.max(math.abs(minX), math.abs(maxX))
+        local yRadius = (maxY - minY) / 2
+        local zRadius = math.max(math.abs(minZ), math.abs(maxZ))
+        local across = math.abs(math.cos(yaw)) * xRadius + math.abs(math.sin(yaw)) * zRadius
+        local along = math.abs(math.sin(yaw)) * xRadius + math.abs(math.cos(yaw)) * zRadius
+        local vertical = math.abs(math.cos(pitch)) * yRadius + math.abs(math.sin(pitch)) * along
+        local depth = math.abs(math.cos(pitch)) * along + math.abs(math.sin(pitch)) * yRadius
+        local tanHalfFov = math.tan(math.rad(25))
+        local distance = depth + 1.2 * math.max(
+            vertical / tanHalfFov,
+            across / (tanHalfFov * group.width / group.height)
+        )
+        state.fitCentre[state.tab] = (minY + maxY) / 2
+        drawHeight()
+        setDistance(math.max(1200, distance))
+        setStatus("Fit estimated from config size. Adjust Center or zoom if needed.")
+    end, 26)
+    fitButton:SetPos(87, -150, 0.5, 1)
+
+    local resetBackground = ui.Rectangle.new(content)
+    resetBackground:SetPos(-101, -151, 1, 1)
+    resetBackground:SetSize(34, 28)
+    resetBackground.fill = true
+    resetBackground.rgba = 0x211D18FF
+    resetBackground.clickthrough = true
+    local resetBorder = ui.Rectangle.new(content)
+    resetBorder:SetPos(-101, -151, 1, 1)
+    resetBorder:SetSize(34, 28)
+    resetBorder.fill = false
+    resetBorder.outlineThickness = 1
+    resetBorder.rgba = 0x8E7853FF
+    resetBorder.clickthrough = true
+    local resetButton = prettyui.SpriteButton.new(content, "REFRESH", function()
+        local angle = state.rotation[state.tab]
+        local pan = state.pan[state.tab]
+        angle.yaw, angle.pitch = 0, 0
+        pan.x, pan.y = 0, 0
+        state.fitCentre[state.tab] = nil
+        state.heightShift[state.tab] = 0
+        drawHeight()
+        setDistance(math.max(1200, state.height * 2.5))
+        placement.setRotation(state.tab, angle)
+        yawField.content, pitchField.content = "0.0", "0.0"
+        setStatus("Model and preview reset.")
+    end, { x = 0, y = 0, size = 24 })
+    resetButton.root:SetPos(-96, -149, 1, 1)
+
     local function chooseHeight(y)
         local travel = heightTrack.height - 14
         if travel <= 0 then return false end
@@ -660,6 +812,7 @@ function viewer.openWindow()
         state.heightShift[state.tab] = math.floor((1500 - fraction * 3000) / 25 + 0.5) * 25
         drawHeight()
         applyCamera()
+        applyPreviewTransform()
         return false
     end
 
@@ -675,6 +828,9 @@ function viewer.openWindow()
     seqInfo:SetPos(338, -82, 0, 1)
     npcInfo:SetSize(-344, 22, 1, 0)
     seqInfo:SetSize(-344, 22, 1, 0)
+    local dragHint = label(content, "Drag to turn model | Shift+drag to pan", 338, 0, 300, 0xB8AA90FF)
+    dragHint:SetPos(338, -59, 0, 1)
+    dragHint:SetSize(-344, 22, 1, 0)
     view.info = npcInfo
     view.seqInfo = seqInfo
 
@@ -694,6 +850,8 @@ function viewer.openWindow()
         shownTab = tab
         state.tab = tab
         drawHeight()
+        yawField.content = string.format("%.1f", state.rotation[tab].yaw)
+        pitchField.content = string.format("%.1f", state.rotation[tab].pitch)
         if previous and previous ~= tab then placement.cancel() end
         if previous == "loc" and tab ~= "loc" then selection.clearParts() end
         npcTab.hidden = tab ~= "npc"
@@ -706,7 +864,7 @@ function viewer.openWindow()
                 -- This is the largest catalog, so load it on first use.
                 modelNames = modelNames or search.load("Model")
                 view.names.models = modelNames
-                makeSearchTabs(assetTab, "Model assets", "Model", modelNames,
+                seqRefresh.models = makeSearchTabs(assetTab, "Model assets", "Model", modelNames,
                     function(assetId) selection.selectModel(view, assetId) end,
                     function(seqId) selection.setSeq(view, "models", seqId) end)
                 assetSearchBuilt = true
@@ -716,7 +874,7 @@ function viewer.openWindow()
             if not objSearchBuilt then
                 objNames = objNames or search.load("Obj")
                 view.names.obj = objNames
-                makeSearchTabs(objTab, "Objs", "Obj", objNames,
+                seqRefresh.obj = makeSearchTabs(objTab, "Objs", "Obj", objNames,
                     function(objId) selection.selectObj(view, objId) end,
                     function(seqId) selection.setSeq(view, "obj", seqId) end)
                 objSearchBuilt = true
@@ -737,7 +895,7 @@ function viewer.openWindow()
             if not locSearchBuilt then
                 locNames = locNames or search.load("Loc")
                 view.names.loc = locNames
-                makeSearchTabs(locTab, "Locs", "Loc", locNames,
+                seqRefresh.loc = makeSearchTabs(locTab, "Locs", "Loc", locNames,
                     function(locId) selection.selectLoc(view, locId) end,
                     function(seqId) selection.setSeq(view, "loc", seqId) end, 170)
                 shapeInfo = label(locTab, "", 12, 279, 296, 0xF3C971FF)

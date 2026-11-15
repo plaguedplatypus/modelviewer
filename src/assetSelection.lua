@@ -3,6 +3,7 @@ local placement = require("src/placement")
 local selection = {}
 local locConfig
 local parts = {}
+local firstLocShapes = {}
 
 
 local shapeNames = {
@@ -70,6 +71,7 @@ function selection.selectNpc(view, npcId)
     -- starts centered with a distance estimated from its overlay height.
     if state.npcId ~= npcId then
         state.npcDistance = nil
+        state.fitCentre.npc = nil
         state.pan.npc.x, state.pan.npc.y = 0, 0
     end
     state.npcId = npcId
@@ -92,6 +94,7 @@ function selection.selectModel(view, assetId)
     local state = view.state
     if state.assetId ~= assetId then
         state.assetDistance = nil
+        state.fitCentre.models = nil
         state.pan.models.x, state.pan.models.y = 0, 0
     end
     state.assetId = assetId
@@ -121,6 +124,7 @@ function selection.selectObj(view, objId)
     local state = view.state
     if state.objId ~= objId then
         state.objDistance = nil
+        state.fitCentre.obj = nil
         state.pan.obj.x, state.pan.obj.y = 0, 0
     end
     state.objId = objId
@@ -148,6 +152,24 @@ end
 function selection.reset()
     parts = {}
     locConfig = nil
+end
+
+-- The Loc ID catalog includes MultiLoc selectors and other entries with no
+-- direct models. Cache the first drawable shape for search and selection.
+function selection.findLocShape(locId)
+    local cached = firstLocShapes[locId]
+    if cached ~= nil then return cached or nil end
+    local loc = config.Loc.FromID(locId)
+    if loc then
+        for index, shape in ipairs(loc.locShapeTypes) do
+            if #loc:GetModelIDs(shape) > 0 then
+                firstLocShapes[locId] = index
+                return index
+            end
+        end
+    end
+    firstLocShapes[locId] = false
+    return nil
 end
 
 -- A Loc can use several model IDs, and each supported shape can use a
@@ -211,8 +233,9 @@ function selection.selectLoc(view, locId)
     local state = view.state
     if state.locId ~= locId then
         state.locDistance = nil
+        state.fitCentre.loc = nil
         state.pan.loc.x, state.pan.loc.y = 0, 0
-        state.shapeIndex = 1
+        state.shapeIndex = selection.findLocShape(locId) or 1
     end
     state.locId = locId
     locConfig = found
@@ -224,6 +247,7 @@ function selection.stepShape(view, delta)
     local count = #locConfig.locShapeTypes
     if count == 0 then return end
     view.state.shapeIndex = ((view.state.shapeIndex - 1 + delta) % count) + 1
+    view.state.fitCentre.loc = nil
     setShape(view)
 end
 

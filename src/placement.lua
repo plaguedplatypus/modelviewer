@@ -47,18 +47,25 @@ local function applyTransform(item)
         )
         modelScale = Vector3.new(scale * locScale.x, scale * locScale.y, scale * locScale.z)
     end
-    local rotation = Vector3.new(math.rad(item.yaw), math.rad(item.pitch), 0)
-    item.model:SetTransform(position, rotation, modelScale, 0)
+    -- Tilt around the estimated model centre so pitch keeps its middle over
+    -- the tile. The same yaw/pitch/roll is used by the preview.
+    local pitch = math.rad(item.pitch)
+    local centre = item.height * scale / 2
+    position = Vector3.new(position.x,
+        position.y + centre * (1 - math.cos(pitch)),
+        position.z - centre * math.sin(pitch))
+    item.model:SetTransform(position, item.rotation, modelScale, 0)
     for _, part in ipairs(item.parts) do
-        part:SetTransform(position, rotation, modelScale, 0)
+        part:SetTransform(position, item.rotation, modelScale, 0)
     end
 end
 
 -- Changing tabs should not turn a model placed from the other tab.
-function placement.setRotation(kind, yaw, pitch)
+function placement.setRotation(kind, angle)
     local item = active
     if not item or item.kind ~= kind then return end
-    item.yaw, item.pitch = yaw, pitch
+    item.pitch = angle.pitch
+    item.rotation = angle.transform
     applyTransform(item)
 end
 
@@ -368,7 +375,9 @@ local function placeAt(coord)
     -- Raw models, Locs, and Objs have no exposed bounds. NPCs can use their overlay height.
     item.height = npc and (npc.overlayHeight > 0 and npc.overlayHeight or 700) or 700
     item.distance = math.max(1200, item.height * 2.5)
-    item.yaw, item.pitch = state.yaw, state.pitch
+    local angle = state.rotation[kind]
+    item.pitch = angle.pitch
+    item.rotation = angle.transform
     placed[#placed + 1] = item
     active = item
     drawOrder = {}
