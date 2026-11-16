@@ -399,7 +399,7 @@ local function makeSearch(parent, kind, names, y, selected, getSelected, listHei
     end
 
     local function runSearch()
-        panel:Unsubscribe(ui.Hook.ONTIMER)
+        if pendingLocs then panel:Unsubscribe(ui.Hook.ONTIMER) end
         pendingLocs = nil
         matches = search.find(names, input.content)
         if kind == "Loc" and #matches > 1 then
