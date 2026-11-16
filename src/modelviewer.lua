@@ -249,6 +249,7 @@ local function makeSearch(parent, kind, names, y, selected, getSelected, listHei
     local visibleRows = math.floor((height - 8) / rowHeight)
     local rows = {}
     local matches = {}
+    local pendingLocs
     local page = 1
     -- Paging avoids creating a UI component for every entry in a large catalog.
     local pageSize = 500
@@ -379,15 +380,17 @@ local function makeSearch(parent, kind, names, y, selected, getSelected, listHei
     border.rgba = 0x665B4DFF
     border.clickthrough = true
 
-    local function showPage()
+    local function showPage(keepScroll)
         local pageCount = math.max(1, math.ceil(#matches / pageSize))
-        pageText.content = page .. " / " .. pageCount
+        pageText.content = page .. " / " .. (pendingLocs and "..." or pageCount)
         first = (page - 1) * pageSize + 1
         last = math.min(first + pageSize - 1, #matches)
-        offset = 1
+        if not keepScroll then offset = 1 end
         renderRows()
         local source = "Client catalog: " .. names.count .. ". "
-        if #matches == 0 then
+        if pendingLocs then
+            setStatus(source .. "Checking Locs for models: " .. #matches .. " found so far.")
+        elseif #matches == 0 then
             setStatus(source .. "No " .. kind .. " matches. Try an exact ID or part of a name.")
         else
             setStatus(source .. kind .. " results " .. first .. "-" .. last .. " of " .. #matches
@@ -396,17 +399,37 @@ local function makeSearch(parent, kind, names, y, selected, getSelected, listHei
     end
 
     local function runSearch()
+        panel:Unsubscribe(ui.Hook.ONTIMER)
+        pendingLocs = nil
         matches = search.find(names, input.content)
-        if kind == "Loc" then
-            local visible = {}
-            for _, locId in ipairs(matches) do
-                if selection.findLocShape(locId) then visible[#visible + 1] = locId end
-            end
-            matches = visible
+        if kind == "Loc" and #matches > 1 then
+            -- Reading every Loc config in one callback can exceed the client's
+            -- Lua time limit. Check a small batch each logic tick instead.
+            pendingLocs, matches = matches, {}
+            local nextLoc = 1
+            panel:Subscribe(ui.Hook.ONTIMER, function()
+                local lastLoc = math.min(nextLoc + 99, #pendingLocs)
+                for index = nextLoc, lastLoc do
+                    local locId = pendingLocs[index]
+                    if selection.findLocShape(locId) then matches[#matches + 1] = locId end
+                end
+                nextLoc = lastLoc + 1
+                if nextLoc > #pendingLocs then
+                    pendingLocs = nil
+                    panel:Unsubscribe(ui.Hook.ONTIMER)
+                end
+                showPage(true)
+                if not pendingLocs and #matches == 1 then
+                    selected(matches[1])
+                    renderRows()
+                end
+            end)
+        elseif kind == "Loc" and #matches == 1 and not selection.findLocShape(matches[1]) then
+            matches = {}
         end
         page = 1
         showPage()
-        if #matches == 1 then
+        if not pendingLocs and #matches == 1 then
             selected(matches[1])
             renderRows()
         end
@@ -895,13 +918,13 @@ function viewer.openWindow()
             if not locSearchBuilt then
                 locNames = locNames or search.load("Loc")
                 view.names.loc = locNames
-                seqRefresh.loc = makeSearchTabs(locTab, "Locs", "Loc", locNames,
-                    function(locId) selection.selectLoc(view, locId) end,
-                    function(seqId) selection.setSeq(view, "loc", seqId) end, 170)
                 shapeInfo = label(locTab, "", 12, 279, 296, 0xF3C971FF)
                 shapePage = label(locTab, "", 12, 307, 166)
                 view.shapeInfo = shapeInfo
                 view.shapePage = shapePage
+                seqRefresh.loc = makeSearchTabs(locTab, "Locs", "Loc", locNames,
+                    function(locId) selection.selectLoc(view, locId) end,
+                    function(seqId) selection.setSeq(view, "loc", seqId) end, 170)
                 button(locTab, "Prev", 184, 306, 58, function() selection.stepShape(view, -1) end, 22)
                 button(locTab, "Next", 248, 306, 60, function() selection.stepShape(view, 1) end, 22)
                 locSearchBuilt = true
