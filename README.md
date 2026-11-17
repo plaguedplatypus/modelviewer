@@ -30,11 +30,9 @@ To check the loaded list, clear a search box and press **Search**. The status li
 
 ## Show an NPC, model, Loc, or Obj over a game tile
 
-On any asset tab, press **Place on tile...**. Right-click a tile in the game view and choose **Place model here**. Repeat this to add more models, including different NPCs, raw models, Locs, and Objs. The button changes to **Cancel placement** while you are choosing a tile. **Remove last** removes the most recently placed model; **Clear all** removes every placed model.
+On any asset tab, press **Place on tile...**. A cyan outline marks the tile under your cursor. Right-click that tile in the game view and choose **Place model here**. Repeat this to add more models, including different NPCs, raw models, Locs, and Objs. The button changes to **Cancel placement** while you are choosing a tile. **Remove last** removes the most recently placed model; **Clear all** removes every placed model. To remove one from the game view, right-click its original tile and choose **Remove model here**. If several models share a tile, repeat the action to remove them from newest to oldest.
 
 The most recently added placement follows changes to the selected asset, Seq, shape, and model rotation on its tab while it remains placed. Earlier placements keep their appearance, so you can select another asset and place it without changing the ones already in the scene. A Loc is placed with all the model parts, scale, and offsets for its chosen shape. Shapes with no direct model cannot be placed; selecting one removes the active placement if it is a Loc.
-
-These are client-side UI models aligned with their selected tiles, not game-world entities. They follow the camera's angle and zoom. When placed models overlap, the one on the nearer tile draws in front. Because each model is a separate UI overlay, intersecting models may still overlap imperfectly, and game objects and characters may not hide them correctly. Each hides when you move more than 40 tiles away and reappears when you return. They use the plugin bottom layer so they stay below plugin windows.
 
 ## Adjust the view
 
@@ -49,4 +47,3 @@ These are client-side UI models aligned with their selected tiles, not game-worl
 - **Window size:** Drag an edge or corner of the viewer window to make the model preview larger or smaller. The search and numeric controls stay on the left; framing buttons stay along the preview's lower edge.
 
 The game API does not provide rendered model bounds. NPC and Loc fits use their tile size and any custom picking bounds, so unusual shapes and animations may still need manual zoom or **Adjust Center**.
-

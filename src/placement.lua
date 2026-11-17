@@ -16,6 +16,7 @@ local placing = false
 local placeButton
 local state
 local setStatus
+local tileOutline
 
 -- The viewer owns the current selection and the status line. Placement reads
 -- those when the player chooses a tile, so it does not keep a second selection.
@@ -127,14 +128,19 @@ local function drawOne(item, player, cameraYaw, cameraPitch)
     local origin = item.parent.xyGlobal
     local x = point.x - origin.x
     local y = point.y - origin.y
-    item.group.hidden = x < 0 or y < 0 or x >= item.parent.width or y >= item.parent.height
-    if item.group.hidden then return end
-
     local projectedPixels = point.y - head.y
     if projectedPixels <= 0 then
         item.group.hidden = true
         return
     end
+
+    -- The foot can leave the bottom of the screen while the model is still
+    -- visible. Raw models and Locs have estimated bounds, so allow a generous
+    -- horizontal margin instead of cutting wide shapes at the tile centre.
+    local width = item.parent.width
+    item.group.hidden = y < 0 or head.y - origin.y >= item.parent.height
+        or x < -width or x >= width * 2
+    if item.group.hidden then return end
 
     -- A large angle step is visible on tall models when the game camera moves.
     -- Keep the step small without rebuilding the UI camera on every draw.
@@ -241,22 +247,75 @@ local function drawPlaced()
     end
 end
 
+-- Keep the cursor outline tied to the same tile used by the menu action.
+-- A flat outline is enough to identify the tile while placing; the small
+-- height offset keeps it visible on ordinary ground.
+local function drawCursor()
+    if not Mouse.IsAvailable() then return end
+    local cursor = Mouse.GetPosition()
+    local coord = cursor and ScreenConvert.ScreenToCoordGrid(cursor)
+    if not coord then return end
+    local pos = coord:ToCoordFine(true).position
+    local height, found = World.GetGroundHeight(coord.level, pos.x, pos.z)
+    if not found then return end
+    ShapeList.Draw{
+        shapeData = tileOutline,
+        translation = Vector3.new(pos.x, height + 20, pos.z),
+        colour = 0x66CCFFFF,
+        ignoreDepth = false,
+    }
+end
+
 -- The host may have removed an interface during a reload, so destroying its
 -- old group is protected. Once the last group is gone, stop the draw callback.
-function placement.removeLast()
-    local item = table.remove(placed)
+local function removeItem(item)
     if not item then return false end
+    local index
+    for i, placedItem in ipairs(placed) do
+        if placedItem == item then
+            index = i
+            break
+        end
+    end
+    if not index then return false end
+    table.remove(placed, index)
     if item == active then active = nil end
     drawOrder = {}
-    if #placed == 0 then Event.Draw.Unsubscribe("modelview_placed") end
+    if #placed == 0 then
+        Event.Draw.Unsubscribe("modelview_placed")
+        Event.MiniMenuReady.Unsubscribe("modelview_remove")
+    end
     pcall(function() item.group:Destroy() end)
     return true
+end
+
+function placement.removeLast()
+    return removeItem(placed[#placed])
+end
+
+-- One menu entry removes the newest model on this tile. Repeating the action
+-- can remove older models placed on the same tile without touching others.
+local function offerRemoval(event)
+    local cursor = Mouse.IsAvailable() and Mouse.GetPosition()
+    local coord = cursor and ScreenConvert.ScreenToCoordGrid(cursor)
+    if not coord then return end
+    for i = #placed, 1, -1 do
+        local item = placed[i]
+        if item.coord.level == coord.level and item.coord.x == coord.x
+            and item.coord.z == coord.z then
+            event.miniMenu:Add("Remove model here", function(chosen)
+                if removeItem(chosen) then setStatus("Model removed from this tile.") end
+            end, item)
+            return
+        end
+    end
 end
 
 function placement.clear()
     local count = #placed
     if count == 0 then return 0 end
     Event.Draw.Unsubscribe("modelview_placed")
+    Event.MiniMenuReady.Unsubscribe("modelview_remove")
     for _, item in ipairs(placed) do
         pcall(function() item.group:Destroy() end)
     end
@@ -271,6 +330,7 @@ function placement.cancel()
     if not placing then return end
     placing = false
     Event.MiniMenuReady.Unsubscribe("modelview_place")
+    Event.Draw.Unsubscribe("modelview_cursor")
     if placeButton then placeButton.label = "Place on tile..." end
 end
 
@@ -381,7 +441,10 @@ local function placeAt(coord)
     placed[#placed + 1] = item
     active = item
     drawOrder = {}
-    if #placed == 1 then Event.Draw.Subscribe("modelview_placed", drawPlaced) end
+    if #placed == 1 then
+        Event.Draw.Subscribe("modelview_placed", drawPlaced)
+        Event.MiniMenuReady.Subscribe("modelview_remove", offerRemoval)
+    end
     -- Each tab remembers its own Seq. Loc shapes can contain several models.
     if kind == "loc" then
         placement.setLoc(ids, loc, state.locSeqId)
@@ -421,6 +484,15 @@ function placement.toggle()
     end
     placing = true
     placeButton.label = "Cancel placement"
+    if not tileOutline then
+        tileOutline = ShapeData.new()
+        tileOutline.positions = {
+            Vector3.new(-250, 0, -250), Vector3.new(250, 0, -250),
+            Vector3.new(250, 0, 250), Vector3.new(-250, 0, 250),
+        }
+        tileOutline.lines = { 0, 1, 1, 2, 2, 3, 3, 0 }
+    end
+    Event.Draw.Subscribe("modelview_cursor", drawCursor)
     -- Only add the action when the cursor points at a game tile. Selecting it
     -- captures that tile without sending a walk command to the game.
     Event.MiniMenuReady.Subscribe("modelview_place", function(event)
