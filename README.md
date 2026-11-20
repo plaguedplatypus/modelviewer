@@ -4,7 +4,7 @@ Model Viewer is a RuneScape development plugin for inspecting NPCs, Locs, Objs, 
 
 ## Open the viewer
 
-1. Enable **Model Viewer** in the development client. It requires the **PrettyUI** plugin.
+1. Enable **Model Viewer** in the development client with **PrettyUI 1.3.0** installed.
 2. Open the **Plugins** ribbon, choose **Model Viewer**, then press **Open Viewer**.
 3. Close the window when finished. The ribbon button opens it again.
 
@@ -16,15 +16,23 @@ Search by exact ID or part of a name, then select a font in the scrollable list.
 
 ## Find a model or animation
 
-On the **NPC** tab, use **NPCs** to search for an NPC ID or part of its config name, then select a result to display it. Use **Seq animations** on the same tab to find and apply a Seq to that NPC. Each view remembers its search when you switch between them. Press **Clear animation** to stop the Seq and return to the NPC's still pose. NPC and Seq IDs are checked against the active game cache before use.
+Search for an asset by ID or name on the left and browse animations beside it. Camera, rotation, and placement controls sit below the animation list. The preview is on the right. Each asset tab remembers its searches.
 
-On the **Models** tab, use **Model assets** to search for an asset ID or part of its name, then select a result to view that raw model. Use **Seq animations** on the same tab to find and apply a Seq to it. **Clear animation** returns the model to its still pose. A raw model can be a chat head, body part, effect, or other single asset rather than a complete NPC. The API does not expose a model config lookup, so a listed asset may still appear blank if it is missing from the active cache.
+On the **NPC** tab, select a result to display it. If the NPC has a base animation set, its name and ID appear below the still preview. The client API exposes the set's identity but gives the plugin no way to read or play its individual animations. Use **All animations** to find and apply a Seq manually. Press **Clear animation** to return to the still preview. NPC and Seq IDs are checked against the active game cache before use.
 
-On the **Locs** tab, search for scenery by Loc ID or config name. Results omit Locs with no direct model in any supported shape, such as invisible Locs and MultiLoc selectors without their own models. The list fills as the client checks Locs; a broad search may take a moment to finish. Select a Loc to preview its first shape with a model. Use the shape **Prev** and **Next** buttons below the list to see its other forms. The shape name and number appear above those buttons. The **Seq animations** view can apply a Seq to the Loc's models, though an incompatible animation may do nothing.
+On the **Models** tab, select a raw model from the left list and use **All animations** to find and apply a Seq to it. **Clear animation** returns the model to its still pose. A raw model can be a chat head, body part, effect, or other single asset rather than a complete NPC. The API does not expose a model config lookup, so a listed asset may still appear blank if it is missing from the active cache.
 
-On the **Objs** tab, search for an item by Obj ID or config name. Select it to see the item's 3D model and display name. An Obj is an item definition, separate from a raw model asset; this preview shows its item model rather than its inventory icon. Use camera distance if an unusually small or large item needs a closer view. You can try a Seq, but most items have no compatible animation.
+On the **Locs** tab, search for scenery by Loc ID or config name. Results omit Locs with no direct model in any supported shape, such as invisible Locs and MultiLoc selectors without their own models. The list fills as the client checks Locs; a broad search may take a moment to finish. Select a Loc to preview its first shape with a model and play its default animation if it has one. Use the shape **Prev** and **Next** buttons below the list to see its other forms. Choose **Configured** to see the selected Loc's animations, or **All** to try a Seq from the full catalog. **Clear animation** stops playback while that Loc stays selected.
 
-Each search starts with the full catalog. The viewer builds names from the active client's ID tables when it opens each catalog. Reload the plugin after a game update to refresh those names. Scroll within the result list and use **Prev** and **Next** to move through every match in pages of 500. The asset or Seq shown in the preview is highlighted in gold when its row is visible in the results. Enter an exact ID or part of a name to narrow a large catalog. A search with one result selects it automatically. Some NPC and Obj configs have no visible model. A Seq built for a different skeleton or model rig may leave it still or animate it strangely. Every asset tab remembers its own selected Seq.
+On the **Objs** tab, search for an item by Obj ID or config name. Select it to see the item's 3D model and display name. 
+
+An Obj is an item definition, separate from a raw model asset; this preview shows its item model rather than its inventory icon. Use camera distance if an unusually small or large item needs a closer view.
+
+On **Models** and **Objs**, open **Filters** and uncheck any groups you want to hide from name and exact-ID searches. An unchecked group hides its entries even if they also match a checked group. **Other** controls entries outside the named groups. All filters start checked. Search and placement status appears below the preview.
+
+To define a filter in `src/catalogCategories.lua`, use literal config-name fragments. `prefixes = { "REWARD_" }` matches the start, `suffixes = { "_INV" }` matches the end, and `contains = { "_REWARD_" }` matches a fragment between underscores. `tokens = { "REWARD" }` matches a whole underscore-separated part at any position. A group matches when any of its rules match.
+
+Asset rows show the in-game name when available and use the client name as a fallback. The selected asset's client name appears below the preview. Searches still match IDs or client names. 
 
 To check the loaded list, clear a search box and press **Search**. The status line shows **Client catalog** and the number of names found. You can compare that count or a few IDs with the current `pan` output without waiting for a game update.
 
@@ -44,6 +52,6 @@ The most recently added placement follows changes to the selected asset, Seq, sh
 - **Reset preview:** Press the refresh icon button at the lower right to restore the current tab's starting model angle, zoom, center adjustment, and pan. If the active placed model came from the same tab, its rotation resets too. The selected asset and animation stay selected.
 - **Position:** Hold **Shift** while dragging the preview to move the NPC or model on screen. Pan follows the screen direction as the model turns. Press **Center** to reset its position. Each tab keeps its own position until another NPC or model is selected.
 - **Background:** Click the colour swatch below **Clear animation**, choose a colour, and confirm it in the picker. Press **Reset** to restore the original background. The preview remembers the chosen colour while the viewer is open.
-- **Window size:** Drag an edge or corner of the viewer window to make the model preview larger or smaller. The search and numeric controls stay on the left; framing buttons stay along the preview's lower edge.
+- **Move and resize the window** by dragging the title bar or an edge or corner, including in Classic mode. The asset list grows vertically with the window and the preview uses the available space on the right.
 
 The game API does not provide rendered model bounds. NPC and Loc fits use their tile size and any custom picking bounds, so unusual shapes and animations may still need manual zoom or **Adjust Center**.

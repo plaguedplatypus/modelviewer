@@ -22,6 +22,13 @@ local pitchField
 local shapeInfo
 local shapePage
 local defaultBackground = 0x12110F
+local columnStep = 312
+local previewX = 642
+local previewRight = 64
+local assetTabTop = 42
+local locAnimationTop = 30
+local locAnimationHeight = 237
+local locShapeTop = locAnimationTop + locAnimationHeight + 8
 
 -- Each asset tab keeps its own model angle, camera distance, height, and pan.
 local state = {
@@ -227,54 +234,85 @@ view.setStatus = setStatus
 view.setDistance = setDistance
 
 -- NPCs, Locs, Objs, Seqs, and raw assets use the same sparse-ID catalog search.
--- Each asset tab uses the same two search views. Each view keeps its
--- own query and scroll position while the selected asset stays in the preview.
+-- Each asset tab keeps its own asset and Seq searches visible side by side.
 local assetFields = { NPC = "npcId", Model = "assetId", Loc = "locId", Obj = "objId" }
 local seqFields = { NPC = "seqId", Model = "assetSeqId", Loc = "locSeqId", Obj = "objSeqId" }
-local function makeSearchTabs(parent, title, kind, names, selected, seqSelected, listHeight)
+local function makeSearchPanels(parent, kind, names, selected, seqSelected)
     local assetSearch = ui.Layer.new(parent)
-    assetSearch:SetPos(0, 34)
-    assetSearch:SetSize(326, 306)
-    local seqSearch = ui.Layer.new(parent)
-    seqSearch:SetPos(0, 34)
-    seqSearch:SetSize(326, 306)
-    seqSearch.hidden = true
+    assetSearch:SetSize(320, -20, 0, 1)
 
-    local searchLine = ui.Rectangle.new(parent)
-    searchLine:SetPos(12, 29)
-    searchLine:SetSize(144, 2)
-    searchLine.fill = true
-    searchLine.rgba = 0xF3C971FF
-    searchLine.clickthrough = true
-    button(parent, title, 12, 3, 144, function()
-        assetSearch.hidden = false
-        seqSearch.hidden = true
-        searchLine:SetPos(12, 29)
-    end, 24)
-    button(parent, "Seq animations", 164, 3, 144, function()
-        assetSearch.hidden = true
-        seqSearch.hidden = false
-        searchLine:SetPos(164, 29)
-    end, 24)
-
-    local function createSearch(layer, catalogKind, catalog, select, selectedField, acceptsLoc)
-        return modelSearch.create(layer, {
-            kind = catalogKind,
-            names = catalog,
-            listHeight = listHeight or 226,
-            select = select,
-            getSelected = function() return state[selectedField] end,
-            setStatus = setStatus,
-            acceptsLoc = acceptsLoc,
-            label = label,
-            field = field,
-            button = button,
-        })
+    local isLoc = kind == "Loc"
+    local seqTop = isLoc and locAnimationTop or 0
+    local seqHeight = isLoc and locAnimationHeight or 293
+    local function makeSeqLayer(hidden)
+        local layer = ui.Layer.new(parent)
+        layer:SetPos(columnStep, seqTop)
+        layer:SetSize(320, seqHeight)
+        layer.hidden = hidden
+        return layer
     end
 
-    local acceptsLoc = kind == "Loc" and selection.findLocShape or nil
-    createSearch(assetSearch, kind, names, selected, assetFields[kind], acceptsLoc)
-    return createSearch(seqSearch, "Seq", seqNames, seqSelected, seqFields[kind])
+    local function createSearch(layer, options, selectedField)
+        options.getSelected = function() return state[selectedField] end
+        options.setStatus = function(message)
+            if not parent.hidden then setStatus(message) end
+        end
+        options.label = label
+        options.field = field
+        options.button = button
+        return modelSearch.create(layer, options)
+    end
+
+    createSearch(assetSearch, {
+        kind = kind,
+        names = names,
+        select = selected,
+        acceptsLoc = isLoc and selection.findLocShape or nil,
+    }, assetFields[kind])
+
+    local seqSearch = makeSeqLayer(isLoc)
+    local refreshAll = createSearch(seqSearch, {
+        kind = "Seq", names = seqNames, select = seqSelected,
+        caption = not isLoc and "All animations" or nil,
+    }, seqFields[kind])
+    if not isLoc then return refreshAll end
+
+    local configuredSearch = makeSeqLayer(false)
+    local refreshConfigured, setCatalog = createSearch(configuredSearch, {
+        kind = "Seq", names = { count = 0, maxId = 0, source = "Configured animations" },
+        select = seqSelected,
+    }, seqFields[kind])
+    view.setLocSeqCatalog = setCatalog
+    if view.locSeqNames then view.setLocSeqCatalog(view.locSeqNames) end
+
+    local configuredX, allX = columnStep + 12, columnStep + 113
+    local modeLine = ui.Rectangle.new(parent)
+    modeLine:SetPos(configuredX, 26)
+    modeLine:SetSize(94, 2)
+    modeLine.fill = true
+    modeLine.rgba = 0xF3C971FF
+    modeLine.clickthrough = true
+    local function showConfigured(configured)
+        configuredSearch.hidden = not configured
+        seqSearch.hidden = configured
+        modeLine:SetPos(configured and configuredX or allX, 26)
+        if configured then
+            refreshConfigured()
+            if not view.locSeqNames then
+                setStatus("Select a Loc to see its configured animations.")
+            elseif view.locSeqNames.count == 0 then
+                setStatus("This Loc has no configured animations. Choose All to try a Seq.")
+            end
+        else
+            refreshAll()
+        end
+    end
+    button(parent, "Configured", configuredX, 0, 94, function() showConfigured(true) end, 24)
+    button(parent, "All", allX, 0, 94, function() showConfigured(false) end, 24)
+    return function()
+        refreshAll()
+        refreshConfigured()
+    end
 end
 
 local function numberFrom(input, description)
@@ -321,68 +359,100 @@ function viewer.openWindow()
     placement.cancel()
     window = nil
     selection.reset()
+    view.locSeqNames = nil
+    view.setLocSeqCatalog = nil
+
+    local parent = ui.Interfaces:GetComponent(id.Component.TOPLEVEL_V2__PLUGIN_BUILD_LAYER_TOP)
+    if not parent then return end
 
     -- Ask the active client for names when the viewer opens.
     npcNames = search.load("NPC")
     seqNames = search.load("Seq")
     view.names.npc = npcNames
     view.names.seq = seqNames
-    local parent = ui.Interfaces:GetComponent(id.Component.TOPLEVEL_V2__PLUGIN_BUILD_LAYER_TOP)
+    local minWidth = 1020
+    local width = math.max(minWidth, math.min(1200, parent.width))
     window = prettyui.Window.new(parent, {
         title = "Model Viewer",
-        width = 900,
+        width = width,
         height = 725,
-        minWidth = 700,
+        minWidth = minWidth,
         minHeight = 725,
         xAnchor = 0.5,
         yAnchor = 0.5,
-        x = -450,
+        x = -math.floor(width / 2),
         y = -362,
         resizable = true,
+        -- Classic mode keeps the native interface locked.
+        respectInterfaceLock = false,
+        scrollable = false,
         destroyOnClose = false,
     })
     local content = window.content
-    status = label(content, "", 12, 650, 866)
-    status:SetPos(12, -35, 0, 1)
-    status:SetSize(-18, 22, 1, 0)
+    local previewLabelWidth = -(previewX + 6)
+    status = label(content, "", previewX, 650, 540)
+    status:SetPos(previewX, -35, 0, 1)
+    status:SetSize(previewLabelWidth, 22, 1, 0)
 
-    -- Each tab owns its search controls; the preview and model controls
-    -- stay in place so an asset can be inspected with the same gestures.
+    npcInfo = label(content, "", previewX, 0, 540, 0xF3C971FF)
+    npcInfo:SetPos(previewX, -123, 0, 1)
+    npcInfo:SetSize(previewLabelWidth, 22, 1, 0)
+    local clientInfo = label(content, "", previewX, 0, 540)
+    clientInfo:SetPos(previewX, -102, 0, 1)
+    clientInfo:SetSize(previewLabelWidth, 40, 1, 0)
+    clientInfo.maxLines = 2
+    seqInfo = label(content, "No Seq selected", previewX, 0, 540)
+    seqInfo:SetPos(previewX, -59, 0, 1)
+    seqInfo:SetSize(previewLabelWidth, 22, 1, 0)
+    view.info = npcInfo
+    view.seqInfo = seqInfo
+
+    local clientName = ""
+    local infoFont = config.Font.FromID(clientInfo.font)
+    local function wrapClientName()
+        -- Config names have no spaces, so wrap within long words.
+        if infoFont and clientName ~= "" and clientInfo.width > 0 then
+            clientInfo.content = table.concat(infoFont:SplitString(clientName, clientInfo.width, true, true), "\n")
+        else
+            clientInfo.content = clientName
+        end
+    end
+    view.setClientName = function(name)
+        clientName = name
+        wrapClientName()
+    end
+    clientInfo:Subscribe(ui.Hook.ONRESIZE, wrapClientName)
+
+    -- Keep each tab's queries while the shared controls and preview stay in place.
     local seqRefresh = {}
-    local npcTab = ui.Layer.new(content)
-    npcTab:SetPos(0, 40)
-    npcTab:SetSize(326, 340)
-    seqRefresh.npc = makeSearchTabs(npcTab, "NPCs", "NPC", npcNames,
-        function(npcId) selection.selectNpc(view, npcId) end,
-        function(seqId) selection.setSeq(view, "npc", seqId) end)
+    local function makeAssetTab(hidden)
+        local tab = ui.Layer.new(content)
+        tab:SetPos(0, assetTabTop)
+        tab:SetSize(previewX - 8, -assetTabTop, 0, 1)
+        tab.hidden = hidden
+        return tab
+    end
+    local npcTab = makeAssetTab(false)
+    local assetTab = makeAssetTab(true)
+    local locTab = makeAssetTab(true)
+    local objTab = makeAssetTab(true)
 
-    local assetTab = ui.Layer.new(content)
-    assetTab:SetPos(0, 40)
-    assetTab:SetSize(326, 340)
-    assetTab.hidden = true
+    local controls = ui.Layer.new(content)
+    controls:SetPos(columnStep, 386)
+    controls:SetSize(320, 278)
 
-    local locTab = ui.Layer.new(content)
-    locTab:SetPos(0, 40)
-    locTab:SetSize(326, 340)
-    locTab.hidden = true
+    label(controls, "Camera distance", 12, 0, 296)
+    distanceField = field(controls, "2200", 12, 24, 211)
+    button(controls, "Apply", 231, 24, 77, applyDistance)
 
-    local objTab = ui.Layer.new(content)
-    objTab:SetPos(0, 40)
-    objTab:SetSize(326, 340)
-    objTab.hidden = true
-
-    label(content, "Camera distance", 12, 386, 296)
-    distanceField = field(content, "2200", 12, 410, 211)
-    button(content, "Apply", 231, 410, 77, applyDistance)
-
-    label(content, "Model yaw / pitch", 12, 447, 180)
-    yawField = field(content, string.format("%.1f", state.rotation[state.tab].yaw), 12, 471, 72)
-    pitchField = field(content, string.format("%.1f", state.rotation[state.tab].pitch), 92, 471, 72)
+    label(controls, "Model yaw / pitch", 12, 61, 180)
+    yawField = field(controls, string.format("%.1f", state.rotation[state.tab].yaw), 12, 85, 72)
+    pitchField = field(controls, string.format("%.1f", state.rotation[state.tab].pitch), 92, 85, 72)
     pitchField.enabled = not state.lockPitch
-    button(content, "Apply", 172, 471, 65, applyRotation)
+    button(controls, "Apply", 172, 85, 65, applyRotation)
 
-    local pitchLock = ui.Check.new(content)
-    pitchLock:SetPos(200, 447)
+    local pitchLock = ui.Check.new(controls)
+    pitchLock:SetPos(200, 61)
     pitchLock:SetSize(108, 22)
     pitchLock.stylesheetID = id.StyleSheet.CHECKBOX_DEFAULT
     pitchLock.label = "Lock pitch"
@@ -395,22 +465,21 @@ function viewer.openWindow()
         if state.lockPitch then pitchField.content = string.format("%.1f", state.rotation[state.tab].pitch) end
     end)
 
-    button(content, "Clear animation", 12, 508, 296, function()
+    button(controls, "Clear animation", 12, 122, 296, function()
         selection.clearSeq(view, state.tab)
         if seqRefresh[state.tab] then seqRefresh[state.tab]() end
-        seqInfo.content = "No Seq selected"
         setStatus("Animation cleared.")
     end)
 
-    label(content, "Background", 12, 545, 120)
+    label(controls, "Background", 12, 159, 120)
     local background = ui.Rectangle.new(content)
-    background:SetPos(334, 12)
-    background:SetSize(-398, -124, 1, 1)
+    background:SetPos(previewX - 4, 12)
+    background:SetSize(-(previewX + previewRight - 4), -142, 1, 1)
     background.fill = true
     background.rgba = state.background * 256 + 255
 
     local backgroundPicker = prettyui.ColourPicker.new(content, {
-        x = 134, y = 544, buttonSize = 26,
+        x = columnStep + 134, y = 544, buttonSize = 26,
         value = state.background * 256 + 255,
         alphaSlider = false,
         windowTitle = "Model preview background",
@@ -420,14 +489,14 @@ function viewer.openWindow()
             applyCamera()
         end,
     })
-    button(content, "Reset", 168, 544, 140, function()
+    button(controls, "Reset", 168, 158, 140, function()
         backgroundPicker:SetValue(defaultBackground * 256 + 255)
         setStatus("Background reset.")
     end, 26)
 
-    local placeButton = button(content, "Place on tile...", 12, 581, 143, placement.toggle, 26)
+    local placeButton = button(controls, "Place on tile...", 12, 195, 143, placement.toggle, 26)
     placement.setButton(placeButton)
-    button(content, "Remove last", 163, 581, 80, function()
+    button(controls, "Remove last", 163, 195, 80, function()
         placement.cancel()
         if placement.removeLast() then
             setStatus("Most recent placement removed.")
@@ -435,15 +504,15 @@ function viewer.openWindow()
             setStatus("No placed models to remove.")
         end
     end, 26)
-    button(content, "Clear all", 247, 581, 61, function()
+    button(controls, "Clear all", 247, 195, 61, function()
         placement.cancel()
         local count = placement.clear()
         setStatus(count > 0 and (count .. " placed models removed.") or "No placed models to remove.")
     end, 26)
 
     group = ui.ModelGroup.new(content)
-    group:SetPos(338, 16)
-    group:SetSize(-402, -132, 1, 1)
+    group:SetPos(previewX, 16)
+    group:SetSize(-(previewX + previewRight), -150, 1, 1)
     group.clickthrough = true
     model = ui.Model.new(group)
     model:SetSize(0, 0, 1, 1)
@@ -459,8 +528,8 @@ function viewer.openWindow()
     -- The model can draw beyond its original click area after a resize. This
     -- layer follows the whole preview so every visible part gets the controls.
     local previewInput = ui.Layer.new(content)
-    previewInput:SetPos(338, 16)
-    previewInput:SetSize(-402, -132, 1, 1)
+    previewInput:SetPos(previewX, 16)
+    previewInput:SetSize(-(previewX + previewRight), -150, 1, 1)
     previewInput.clickthrough = false
 
     -- Positive wheel deltas scroll down in the client, so they move the camera back.
@@ -518,13 +587,13 @@ function viewer.openWindow()
     local centerLabel = label(content, "Center", 0, 36, 58)
     centerLabel:SetPos(-60, 36, 1, 0)
     local heightValue = label(content, "+0", 0, 0, 55)
-    heightValue:SetPos(-59, -174, 1, 1)
+    heightValue:SetPos(-59, -192, 1, 1)
 
     -- The native slider is horizontal. Keep this narrow vertical track beside
     -- the preview so it does not push the placement controls out of the window.
     local heightTrack = ui.Layer.new(content)
     heightTrack:SetPos(-46, 65, 1, 0)
-    heightTrack:SetSize(24, -244, 0, 1)
+    heightTrack:SetSize(24, -262, 0, 1)
     heightTrack.clickthrough = false
     local trackFill = ui.Rectangle.new(heightTrack)
     trackFill:SetPos(8, 0)
@@ -552,13 +621,13 @@ function viewer.openWindow()
         heightValue.content = string.format("%+d", value)
     end
 
-    local centreButton = button(content, "Center", 346, 0, 84, function()
+    local centreButton = button(content, "Center", previewX + 8, 0, 84, function()
         local pan = state.pan[state.tab]
         pan.x, pan.y = 0, 0
         applyPreviewTransform()
         setStatus("Model centered.")
     end, 26)
-    centreButton:SetPos(346, -150, 0, 1)
+    centreButton:SetPos(previewX + 8, -168, 0, 1)
 
     local fitButton = button(content, "Fit model", 0, 0, 100, function()
         local minX, maxX, minY, maxY, minZ, maxZ = getFitBounds()
@@ -593,16 +662,16 @@ function viewer.openWindow()
         setDistance(math.max(1200, distance))
         setStatus("Fit estimated from config size. Adjust Center or zoom if needed.")
     end, 26)
-    fitButton:SetPos(87, -150, 0.5, 1)
+    fitButton:SetPos((previewX - previewRight) / 2, -168, 0.5, 1, -0.5)
 
     local resetBackground = ui.Rectangle.new(content)
-    resetBackground:SetPos(-101, -151, 1, 1)
+    resetBackground:SetPos(-101, -169, 1, 1)
     resetBackground:SetSize(34, 28)
     resetBackground.fill = true
     resetBackground.rgba = 0x211D18FF
     resetBackground.clickthrough = true
     local resetBorder = ui.Rectangle.new(content)
-    resetBorder:SetPos(-101, -151, 1, 1)
+    resetBorder:SetPos(-101, -169, 1, 1)
     resetBorder:SetSize(34, 28)
     resetBorder.fill = false
     resetBorder.outlineThickness = 1
@@ -621,7 +690,7 @@ function viewer.openWindow()
         yawField.content, pitchField.content = "0.0", "0.0"
         setStatus("Model and preview reset.")
     end, { x = 0, y = 0, size = 24 })
-    resetButton.root:SetPos(-96, -149, 1, 1)
+    resetButton.root:SetPos(-96, -167, 1, 1)
 
     local function chooseHeight(y)
         local travel = heightTrack.height - 14
@@ -640,28 +709,22 @@ function viewer.openWindow()
     thumb:Subscribe(ui.Hook.ONCLICK, function(_, _, y) return chooseHeight(thumb.y + y) end)
     thumb:Subscribe(ui.Hook.ONHOLD, function(_, _, y) return chooseHeight(thumb.y + y) end)
 
-    npcInfo = label(content, "", 338, 545, 540, 0xF3C971FF)
-    seqInfo = label(content, "No Seq selected", 338, 568, 540)
-    npcInfo:SetPos(338, -105, 0, 1)
-    seqInfo:SetPos(338, -82, 0, 1)
-    npcInfo:SetSize(-344, 22, 1, 0)
-    seqInfo:SetSize(-344, 22, 1, 0)
-    local dragHint = label(content, "Drag to turn model | Shift+drag to pan", 338, 0, 300, 0xB8AA90FF)
-    dragHint:SetPos(338, -59, 0, 1)
-    dragHint:SetSize(-344, 22, 1, 0)
-    view.info = npcInfo
-    view.seqInfo = seqInfo
+    label(controls, "Drag to turn model", 12, 232, 296, 0xB8AA90FF)
+    label(controls, "Shift+Drag to pan", 12, 254, 296, 0xB8AA90FF)
 
     local tabLine = ui.Rectangle.new(content)
     tabLine:SetSize(71, 2)
     tabLine.fill = true
     tabLine.rgba = 0xF3C971FF
     tabLine.clickthrough = true
-    local assetSearchBuilt = false
-    local locSearchBuilt = false
-    local objSearchBuilt = false
     local tabPos = { npc = 12, models = 87, loc = 162, obj = 237 }
     local shownTab
+    local function selectLoc(locId)
+        -- A Loc search can finish after the user switches to another asset tab.
+        if state.tab ~= "loc" then return end
+        selection.selectLoc(view, locId)
+        if seqRefresh.loc then seqRefresh.loc() end
+    end
     -- Switching tabs restores that tab's selected asset and Seq.
     local function showTab(tab)
         local previous = shownTab
@@ -678,24 +741,22 @@ function viewer.openWindow()
         objTab.hidden = tab ~= "obj"
         tabLine:SetPos(tabPos[tab], 40)
         if tab == "models" then
-            if not assetSearchBuilt then
+            if not seqRefresh.models then
                 -- This is the largest catalog, so load it on first use.
                 modelNames = modelNames or search.load("Model")
                 view.names.models = modelNames
-                seqRefresh.models = makeSearchTabs(assetTab, "Model assets", "Model", modelNames,
+                seqRefresh.models = makeSearchPanels(assetTab, "Model", modelNames,
                     function(assetId) selection.selectModel(view, assetId) end,
                     function(seqId) selection.setSeq(view, "models", seqId) end)
-                assetSearchBuilt = true
             end
             if previous ~= "models" then selection.selectModel(view, state.assetId) end
         elseif tab == "obj" then
-            if not objSearchBuilt then
+            if not seqRefresh.obj then
                 objNames = objNames or search.load("Obj")
                 view.names.obj = objNames
-                seqRefresh.obj = makeSearchTabs(objTab, "Objs", "Obj", objNames,
+                seqRefresh.obj = makeSearchPanels(objTab, "Obj", objNames,
                     function(objId) selection.selectObj(view, objId) end,
                     function(seqId) selection.setSeq(view, "obj", seqId) end)
-                objSearchBuilt = true
             end
             if previous ~= "obj" then
                 if state.objId then
@@ -704,33 +765,35 @@ function viewer.openWindow()
                     model:SetModel(ui.ModelType.NONE, 0)
                     model.animID = -1
                     npcInfo.content = "Select an Obj"
+                    view.setClientName("")
                     seqInfo.content = "No Seq selected"
                     setDistance(state.objDistance or 1750)
                     setStatus("Select an Obj to preview its item model.")
                 end
             end
         elseif tab == "loc" then
-            if not locSearchBuilt then
+            if not seqRefresh.loc then
                 locNames = locNames or search.load("Loc")
                 view.names.loc = locNames
-                shapeInfo = label(locTab, "", 12, 279, 296, 0xF3C971FF)
-                shapePage = label(locTab, "", 12, 307, 166)
+                shapeInfo = label(locTab, "", columnStep + 12, locShapeTop, 296, 0xF3C971FF)
+                shapePage = label(locTab, "", columnStep + 12, locShapeTop + 28, 166)
                 view.shapeInfo = shapeInfo
                 view.shapePage = shapePage
-                seqRefresh.loc = makeSearchTabs(locTab, "Locs", "Loc", locNames,
-                    function(locId) selection.selectLoc(view, locId) end,
-                    function(seqId) selection.setSeq(view, "loc", seqId) end, 170)
-                button(locTab, "Prev", 184, 306, 58, function() selection.stepShape(view, -1) end, 22)
-                button(locTab, "Next", 248, 306, 60, function() selection.stepShape(view, 1) end, 22)
-                locSearchBuilt = true
+                seqRefresh.loc = makeSearchPanels(locTab, "Loc", locNames, selectLoc,
+                    function(seqId) selection.setSeq(view, "loc", seqId) end)
+                button(locTab, "Prev", columnStep + 184, locShapeTop + 27, 58,
+                    function() selection.stepShape(view, -1) end, 22)
+                button(locTab, "Next", columnStep + 248, locShapeTop + 27, 60,
+                    function() selection.stepShape(view, 1) end, 22)
             end
             if previous ~= "loc" then
                 if state.locId then
-                    selection.selectLoc(view, state.locId)
+                    selectLoc(state.locId)
                 else
                     model:SetModel(ui.ModelType.NONE, 0)
                     model.animID = -1
                     npcInfo.content = "Select a Loc"
+                    view.setClientName("")
                     seqInfo.content = "No Seq selected"
                     shapeInfo.content = "Select a Loc to view its shapes"
                     shapePage.content = ""
@@ -739,6 +802,11 @@ function viewer.openWindow()
                 end
             end
         elseif not previous or previous ~= "npc" then
+            if not seqRefresh.npc then
+                seqRefresh.npc = makeSearchPanels(npcTab, "NPC", npcNames,
+                    function(npcId) selection.selectNpc(view, npcId) end,
+                    function(seqId) selection.setSeq(view, "npc", seqId) end)
+            end
             selection.selectNpc(view, state.npcId)
         end
     end

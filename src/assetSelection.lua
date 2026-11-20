@@ -1,10 +1,16 @@
 local placement = require("src/placement")
+local search = require("src/search")
 
 local selection = {}
 local locConfig
 local parts = {}
 local firstLocShapes = {}
 
+local function showInfo(view, kind, assetId, clientName, asset)
+    local displayName = search.displayName(kind, assetId, asset)
+    view.info.content = kind .. " " .. assetId .. (displayName and ("  " .. displayName) or "")
+    view.setClientName(clientName or "")
+end
 
 local shapeNames = {
     [0] = "WALL_STRAIGHT", [1] = "WALL_DIAGONALCORNER", [2] = "WALL_L",
@@ -30,10 +36,15 @@ local seqStatus = {
     obj = "Seq applied to Obj. Most items have no compatible animation.",
 }
 
+local function showSeq(view, seqId, name)
+    view.seqInfo.content = "Seq " .. seqId .. "  " .. (name or view.names.seq[seqId] or "")
+end
+
 -- A Seq in the catalog may be absent from this game cache. Check it before
 -- replacing the animation currently shown in the preview.
 function selection.setSeq(view, kind, seqId)
-    if not config.Seq.FromID(seqId) then
+    local seq = config.Seq.FromID(seqId)
+    if not seq then
         view.setStatus("Seq " .. seqId .. " is unavailable in this game cache.")
         return
     end
@@ -44,7 +55,7 @@ function selection.setSeq(view, kind, seqId)
         for _, part in ipairs(parts) do part.animID = seqId end
     end
     placement.setAnimation(kind, seqId)
-    view.seqInfo.content = "Seq " .. seqId .. "  " .. view.names.seq[seqId]
+    showSeq(view, seqId, view.names.seq[seqId] or seq.configName)
     view.setStatus(seqStatus[kind])
 end
 
@@ -55,6 +66,7 @@ function selection.clearSeq(view, kind)
         for _, part in ipairs(parts) do part.animID = -1 end
     end
     placement.setAnimation(kind, -1)
+    view.seqInfo.content = (kind == "npc" and view.npcBaseSet) or "No Seq selected"
 end
 
 -- The catalog lists IDs from the client, but the active cache decides whether
@@ -84,10 +96,17 @@ function selection.selectNpc(view, npcId)
     view.model.animID = state.seqId or -1
     placement.setAsset("npc", npcId, view.model.animID, state.height)
     view.setDistance(state.npcDistance or math.max(1200, state.height * 2.5))
-    view.info.content = "NPC " .. npcId .. "  " .. view.names.npc[npcId]
-    view.seqInfo.content = state.seqId and ("Seq " .. state.seqId .. "  " .. view.names.seq[state.seqId])
-        or "No Seq selected"
-    view.setStatus("NPC loaded. Select a Seq to animate it.")
+    showInfo(view, "NPC", npcId, view.names.npc[npcId], npcConfig)
+    local baseSet = npcConfig.bas
+    -- The API identifies the base set but does not expose its member Seq IDs.
+    view.npcBaseSet = baseSet and ("Base set " .. baseSet.id .. "  " .. (baseSet.configName or "")) or nil
+    if state.seqId then
+        showSeq(view, state.seqId)
+    else
+        view.seqInfo.content = view.npcBaseSet or "No Seq selected"
+    end
+    view.setStatus(baseSet and "Base set playback is unavailable. Choose a Seq under All animations."
+        or "NPC loaded. Choose a Seq under All animations.")
 end
 
 function selection.selectModel(view, assetId)
@@ -106,7 +125,7 @@ function selection.selectModel(view, assetId)
     view.model.animID = state.assetSeqId or -1
     placement.setAsset("models", assetId, view.model.animID, state.height)
     view.setDistance(state.assetDistance or math.max(1200, state.height * 2.5))
-    view.info.content = "Model " .. assetId .. "  " .. view.names.models[assetId]
+    showInfo(view, "Model", assetId, view.names.models[assetId])
     view.seqInfo.content = state.assetSeqId and ("Seq " .. state.assetSeqId .. "  " .. view.names.seq[state.assetSeqId])
         or "No Seq selected"
     view.setStatus("Model asset selected. Use camera distance to adjust the preview.")
@@ -135,7 +154,7 @@ function selection.selectObj(view, objId)
     view.model.animID = state.objSeqId or -1
     placement.setAsset("obj", objId, view.model.animID, state.height)
     view.setDistance(state.objDistance or 1750)
-    view.info.content = "Obj " .. objId .. "  " .. obj.name .. "  " .. view.names.obj[objId]
+    showInfo(view, "Obj", objId, view.names.obj[objId], obj)
     view.seqInfo.content = state.objSeqId and ("Seq " .. state.objSeqId .. "  " .. view.names.seq[state.objSeqId])
         or "No Seq selected"
     view.setStatus("Obj loaded. Use camera distance to adjust the preview.")
@@ -152,6 +171,24 @@ end
 function selection.reset()
     parts = {}
     locConfig = nil
+end
+
+local function loadLocSeqs(view, loc)
+    local names = { count = 0, maxId = 0, source = "Configured animations" }
+    local function add(seq)
+        local seqId = seq and seq.id
+        if type(seqId) ~= "number" or seqId < 0 then return nil end
+        if not names[seqId] then
+            names[seqId] = view.names.seq[seqId] or seq.configName or tostring(seqId)
+            names.maxId = math.max(names.maxId, seqId)
+            names.count = names.count + 1
+        end
+        return seqId
+    end
+    local defaultId = add(loc.defaultAnimation)
+    for _, seq in pairs(loc.animations or {}) do add(seq) end
+    view.locSeqNames = names
+    return defaultId
 end
 
 -- The Loc ID catalog includes MultiLoc selectors and other entries with no
@@ -180,7 +217,7 @@ local function setShape(view)
     local shapes = locConfig.locShapeTypes
     local shape = shapes[state.shapeIndex]
     state.height = 700
-    view.info.content = "Loc " .. state.locId .. "  " .. view.names.loc[state.locId]
+    showInfo(view, "Loc", state.locId, view.names.loc[state.locId], locConfig)
 
     if not shape then
         placement.setLoc(nil)
@@ -218,8 +255,11 @@ local function setShape(view)
         parts[#parts + 1] = part
     end
     placement.setLoc(ids, locConfig, state.locSeqId)
-    view.seqInfo.content = state.locSeqId and ("Seq " .. state.locSeqId .. "  " .. view.names.seq[state.locSeqId])
-        or "No Seq selected"
+    if state.locSeqId then
+        showSeq(view, state.locSeqId, view.locSeqNames[state.locSeqId])
+    else
+        view.seqInfo.content = "No Seq selected"
+    end
     view.setDistance(state.locDistance or 1750)
     view.setStatus("Loc shape loaded. Use camera distance to adjust the preview.")
 end
@@ -231,11 +271,17 @@ function selection.selectLoc(view, locId)
         return
     end
     local state = view.state
-    if state.locId ~= locId then
+    local changed = state.locId ~= locId
+    if changed then
         state.locDistance = nil
         state.fitCentre.loc = nil
         state.pan.loc.x, state.pan.loc.y = 0, 0
         state.shapeIndex = selection.findLocShape(locId) or 1
+    end
+    if changed or not view.locSeqNames then
+        local defaultId = loadLocSeqs(view, found)
+        if changed then state.locSeqId = defaultId end
+        if view.setLocSeqCatalog then view.setLocSeqCatalog(view.locSeqNames) end
     end
     state.locId = locId
     locConfig = found
